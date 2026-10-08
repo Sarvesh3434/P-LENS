@@ -15,7 +15,13 @@ from ml.preprocessing import STRESS_LABELS
 class StressPredictor:
     def __init__(self, model_path: Path, scaler_path: Path):
         blob = torch.load(model_path, map_location="cpu", weights_only=False)
-        self.model = StressGRU(blob["n_features"], blob["hidden"], blob["layers"], blob["dropout"])
+        self.model = StressGRU(
+            blob["n_features"],
+            blob["hidden"],
+            blob["layers"],
+            blob["dropout"],
+            n_classes=blob.get("n_classes", len(STRESS_LABELS)),
+        )
         self.model.load_state_dict(blob["state_dict"])
         self.model.eval()
         self.scaler = joblib.load(scaler_path)

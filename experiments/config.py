@@ -11,7 +11,7 @@ from typing import Dict, List
 # Files sit directly in DataSets/ (flat layout); nested layouts are handled in
 # cic_dir()/unsw_dir() below. [ASSUMPTION]
 DEFAULT_DATASET_ROOT = Path(
-    r"C:\Users\sarve\OneDrive\Attachments\Documents\CN_Project_ML_Training\DataSets"
+    r"C:\Users\sarve\Documents\Project\CN_Project_ML_Training\DataSets"
 )
 
 
@@ -108,7 +108,7 @@ class Config:
         default_factory=lambda: {"Low": 0.7, "Medium": 1.0, "High": 1.3}
     )
     max_train_windows: int = 4000  # cap so CPU training stays in demo territory
-    max_rows_per_file: int = 80000  # [ASSUMPTION] stream cap per CIC/UNSW file for CPU runtime
+    max_rows_per_file: int = 200000  # [ASSUMPTION] stream cap per CIC/UNSW file (200k => ~500 windows/file)
 
     # synthetic traffic generator (dataset="synthetic") [SIM]
     synthetic_windows: int = 1200  # number of windows to generate

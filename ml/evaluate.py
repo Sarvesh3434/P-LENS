@@ -50,10 +50,14 @@ def evaluate_split(model, X, y, y_seq_prev=None) -> dict:
     pred, prob = _predict(model, X)
     acc = accuracy_score(y, pred)
     p, r, f1, _ = precision_recall_fscore_support(y, pred, average="macro", zero_division=0)
-    cm = confusion_matrix(y, pred, labels=[0, 1, 2]).tolist()
+    n_cls = len(STRESS_LABELS)
+    cm = confusion_matrix(y, pred, labels=list(range(n_cls))).tolist()
     auc = None
     try:
-        auc = float(roc_auc_score(y, prob, multi_class="ovr", average="macro"))
+        if n_cls == 2:
+            auc = float(roc_auc_score(y, prob[:, 1]))
+        else:
+            auc = float(roc_auc_score(y, prob, multi_class="ovr", average="macro"))
     except Exception:
         auc = None
     out = {
@@ -72,7 +76,7 @@ def evaluate_split(model, X, y, y_seq_prev=None) -> dict:
         pers = np.r_[y[:1], y[:-1]]
     out["persistence_macro_f1"] = float(f1_score(y, pers, average="macro", zero_division=0))
     out["persistence_accuracy"] = float(accuracy_score(y, pers))
-    maj = np.full_like(y, int(np.bincount(y, minlength=3).argmax()))
+    maj = np.full_like(y, int(np.bincount(y, minlength=n_cls).argmax()))
     out["majority_macro_f1"] = float(f1_score(y, maj, average="macro", zero_division=0))
     out["majority_accuracy"] = float(accuracy_score(y, maj))
     out["beats_persistence"] = bool(out["macro_f1"] >= out["persistence_macro_f1"])

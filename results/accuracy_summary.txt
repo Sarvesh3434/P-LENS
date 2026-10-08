@@ -1,0 +1,16 @@
+P-LENS ML stress classifier (2-class: Normal vs Attack)
+Dataset      : CIC-IDS2017 (8 weekday files, 200k rows/file cap)
+Target       : Normal=0 / Attack=1 (attack_flag per window)
+Model        : GRU (1 layer, 64 hidden), early stopping on val macro-F1
+Train split  : Monday    -> 987 windows (753 Normal / 234 Attack)
+Val split    : Wednesday -> 487 windows (84 Normal / 403 Attack)
+Test split   : Thursday  -> 913 windows (729 Normal / 184 Attack)
+
+accuracy         : 0.9398  (93.98%)
+macro_f1         : 0.9017
+macro_precision  : 0.9244
+macro_recall     : 0.883
+beats_persistence: True
+
+Files: results/ml_metrics.json, results/ml_report.txt, results/model.pt, results/scaler.pkl
+Reproduce: python main.py --dataset cic

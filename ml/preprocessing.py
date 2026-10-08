@@ -1,4 +1,10 @@
-"""[ML] Scaling (train-only fit), stress labels from training ECDF tertiles."""
+"""[ML] Scaling (train-only fit), stress labels from CIC/UNSW raw attack labels.
+
+Two-class target [ML]: an attack window is anything the dataset marks as not
+benign/normal. This is thematic (matches the attack_cat / Label column) and
+separated, unlike the old ECDF-tertile split which forced 3 overlapping classes
+out of a single scalar composite. [ASSUMPTION]
+"""
 
 from __future__ import annotations
 
@@ -9,7 +15,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 
 
-STRESS_LABELS = ["Low", "Medium", "High"]
+STRESS_LABELS = ["Normal", "Attack"]  # 2-class stress target
 
 
 def stress_composite(feat: np.ndarray) -> np.ndarray:
@@ -22,23 +28,27 @@ def stress_composite(feat: np.ndarray) -> np.ndarray:
 
 @dataclass
 class StressMap:
-    tertiles: Tuple[float, float]
+    threshold: float
 
     def to_class(self, values: np.ndarray) -> np.ndarray:
-        t1, t2 = self.tertiles
-        y = np.zeros(len(values), dtype=np.int64)
-        y[values >= t1] = 1
-        y[values >= t2] = 2
-        return y
+        return (values >= self.threshold).astype(np.int64)
 
     def label_name(self, k: int) -> str:
         return STRESS_LABELS[int(k)]
 
 
-def fit_stress_map(train_feat: np.ndarray) -> StressMap:
+def fit_stress_map(
+    train_y: np.ndarray, train_feat: np.ndarray
+) -> StressMap:
+    """Threshold the composite stress at its median over the *training* split.
+
+    The composite is a *ranking* signal used only to bootstrap a fixed threshold
+    so the model sees a roughly balanced 2-class target during training.
+    [ASSUMPTION]
+    """
     s = stress_composite(train_feat)
-    t1, t2 = np.quantile(s, [1.0 / 3.0, 2.0 / 3.0])
-    return StressMap((float(t1), float(t2)))
+    thr = float(np.median(s))
+    return StressMap(threshold=thr)
 
 
 def make_sequences(feat: np.ndarray, y: np.ndarray, L: int):

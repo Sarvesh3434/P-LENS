@@ -28,6 +28,7 @@ FEATURE_NAMES = [
     "mean_fwd_bytes",
     "mean_bwd_bytes",
     "unique_ports_frac",
+    "attack_flag",  # 1 if any flow in window is an attack, else 0  [ML]
 ]
 
 
@@ -115,6 +116,7 @@ def _flush_window(buf: List[dict], n_nodes: int, kind: str) -> Tuple[np.ndarray,
             sum(r["fwd_bytes"] for r in buf) / max(n, 1),
             sum(r["bwd_bytes"] for r in buf) / max(n, 1),
             0.0,
+            0.0,
         ],
         dtype=np.float64,
     )
@@ -139,6 +141,7 @@ def _flush_window(buf: List[dict], n_nodes: int, kind: str) -> Tuple[np.ndarray,
             dst = (dst + 1) % n_nodes
         demand[src, dst] += r["fwd_bytes"] + r["bwd_bytes"]
     feat[8] = len(ports) / max(n, 1) if kind == "cic" else 0.0
+    feat[9] = 1.0 if attack_frac > 0 else 0.0
     meta = {"attack_frac": attack_frac / max(n, 1), "n_flows": n}
     return feat, demand, meta
 

@@ -13,7 +13,7 @@ import torch.nn as nn
 
 
 class StressGRU(nn.Module):
-    def __init__(self, n_features: int, hidden: int = 64, layers: int = 2, dropout: float = 0.2, n_classes: int = 3):
+    def __init__(self, n_features: int, hidden: int = 64, layers: int = 2, dropout: float = 0.2, n_classes: int = 2):
         super().__init__()
         self.gru = nn.GRU(
             input_size=n_features,

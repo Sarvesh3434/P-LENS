@@ -2,7 +2,7 @@
 
 Why: the pipeline should be runnable end-to-end without the external CIC-IDS2017
 / UNSW-NB15 files (e.g. on a fresh machine, in CI, or for debugging). The
-generator produces per-window aggregate features with the same 9 columns and the
+generator produces per-window aggregate features with the same columns and the
 same column order as FEATURE_NAMES, plus a per-window demand matrix, so every
 downstream consumer (scaler, stress map, GRU, simulation) works unchanged.
 [ASSUMPTION] This is a stand-in traffic model, not a claim about real datasets:
@@ -37,7 +37,7 @@ def synthetic_windows(
 ) -> Tuple[np.ndarray, np.ndarray, List[dict]]:
     """Generate (feats, demands, metas) shaped exactly like the real loaders.
 
-    feats:  (W, 9) float64 — same columns as FEATURE_NAMES
+    feats:  (W, len(FEATURE_NAMES)) float64 — same columns as FEATURE_NAMES
     demands: (W, n, n) float64 — per-window demand matrices
     metas:  list of {"attack_frac", "n_flows"} dicts, same keys as real loaders
     """
@@ -98,6 +98,7 @@ def synthetic_windows(
             float(fwd_bytes.mean()),
             float(bwd_bytes.mean()),
             float(unique_ports_frac),
+            float(attack_windows[w]),  # attack_flag: 1.0 iff an attack burst fired [ML]
         ]
 
         # demand matrix: bytes between endpoint pairs, symmetrised [SIM]

@@ -8,6 +8,7 @@ matplotlib.use("Agg")
 import numpy as np
 
 from experiments.config import Config, default_config
+from ml.data_loader import FEATURE_NAMES
 from ml.synthetic import synthetic_windows
 from visualization.plots import (
     ablation_bars,
@@ -22,7 +23,7 @@ from visualization.plots import (
 def test_synthetic_shapes_match_feature_names():
     cfg = default_config(network_size=10, synthetic_windows=40)
     feats, dem, metas = synthetic_windows(cfg, n_windows=40, seed=0)
-    assert feats.shape == (40, 9)
+    assert feats.shape == (40, len(FEATURE_NAMES))
     assert dem.shape == (40, 10, 10)
     assert len(metas) == 40
     assert np.isfinite(feats).all()
@@ -63,7 +64,7 @@ def test_prepare_bundle_synthetic():
     bundle = prepare_bundle(cfg)
     assert bundle["scaled"].shape[0] == 300
     tr = bundle["seq"]["train"]
-    assert tr[0].shape[1:] == (cfg.window_length_L, 9)
+    assert tr[0].shape[1:] == (cfg.window_length_L, len(FEATURE_NAMES))
 
 
 def _tiny_run(cfg: Config, seed: int = 7) -> dict:

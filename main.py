@@ -111,6 +111,20 @@ def main() -> None:
         predictor = TrainedPredictor(out["model"], out["bundle"]["scaler"], cfg.window_length_L)
         bundle = out["bundle"]
 
+    # --- ML evaluation: test-set accuracy -> results/ml_metrics.json [ML] ---
+    if want_ml and bundle is not None:
+        from ml.evaluate import run_evaluation
+
+        model_for_eval = getattr(predictor, "model", None)
+        if model_for_eval is not None:
+            metrics = run_evaluation(cfg, model_for_eval, bundle)
+            print(
+                f"      accuracy = {metrics['accuracy']:.4f}  "
+                f"macro_f1 = {metrics['macro_f1']:.4f}  "
+                f"(beats_persistence={metrics['beats_persistence']})"
+            )
+            print(f"      wrote {cfg.artifacts_dir() / 'ml_metrics.json'}")
+
     # --- demand series for the simulation [SIM] ---
     demand_series, scaled_feat = build_demand_series(cfg, bundle)
     print(f"[2/4] experiment: {cfg.n_seeds} seeds x 4 policies x {cfg.simulation_steps} steps")
