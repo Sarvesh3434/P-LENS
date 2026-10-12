@@ -14,9 +14,62 @@
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{url}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
 
 \graphicspath{{figures/}}
+
+%--- Soft VIT-AP themed palette ---------------------------------------
+\definecolor{vitblue}{RGB}{0,61,120}
+\definecolor{vitaccent}{RGB}{212,175,55}
+\definecolor{vitlight}{RGB}{236,241,248}
+
+%--- Colored section headings (native llncs layout, recolored) --------
+\makeatletter
+\renewcommand\section{\@startsection{section}{1}{\z@}%
+  {-16\p@ \@plus -4\p@ \@minus -4\p@}%
+  {8\p@ \@plus 4\p@ \@minus 4\p@}%
+  {\normalfont\large\bfseries\boldmath\color{vitblue}%
+   \rightskip=\z@ \@plus 8em\pretolerance=10000}}
+\renewcommand\subsection{\@startsection{subsection}{2}{\z@}%
+  {-15\p@ \@plus -4\p@ \@minus -4\p@}%
+  {7\p@ \@plus 4\p@ \@minus 4\p@}%
+  {\normalfont\normalsize\bfseries\boldmath\color{vitblue}%
+   \rightskip=\z@ \@plus 8em\pretolerance=10000}}
+%--- Each section starts on a fresh page -----------------------------
+\let\plens@section\section
+\renewcommand\section{\clearpage\plens@section}
+\makeatother
+
+%--- Roomier display math (formulas were too cramped) -----------------
+\setlength{\abovedisplayskip}{10pt plus 3pt minus 3pt}
+\setlength{\belowdisplayskip}{10pt plus 3pt minus 3pt}
+\setlength{\abovedisplayshortskip}{6pt plus 2pt}
+\setlength{\belowdisplayshortskip}{6pt plus 2pt}
+
+%--- Soft running header / footer -------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\footnotesize\color{vitblue}\itshape P-LENS}
+\fancyhead[R]{\footnotesize\color{vitblue}\thepage}
+
+%--- Slightly tighter, tasteful lists ---------------------------------
+\setlist[itemize]{topsep=3pt,itemsep=2pt,parsep=0pt,leftmargin=1.4em}
+
+%--- Fewer overfull boxes without visibly loosening text --------------
+\setlength{\emergencystretch}{2em}
+
+%--- Ragged, wrap-friendly table columns ------------------------------
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 
 \begin{document}
 
@@ -26,13 +79,13 @@ Budgeted Topology Mutations}
 
 \titlerunning{P-LENS: Plasticity-Pressure-Driven Topology Adaptation}
 
-\author{Team~5\inst{1} \and G.~Deepthi\inst{1}}
+\author{Team~5\inst{1}}
 
-\authorrunning{Team~5 and G.~Deepthi}
+\authorrunning{Team~5}
 
 \institute{VIT-AP University, Amaravati, Andhra Pradesh, India\\
-\email{team5@vitapstudent.ac.in}\\ % replace with your own address
-Supervised by G.~Deepthi (Faculty), VIT-AP University}
+\email{team5@vitapstudent.ac.in} % replace with your own address
+}
 
 \maketitle
 
@@ -65,6 +118,32 @@ implementation.
 \keywords{Evolving networks \and Self-healing networks \and Adaptive topology
 \and Network resilience \and Recurrent neural networks \and Network simulation.}
 \end{abstract}
+
+\begin{center}
+\IfFileExists{figures/vitap-logo.png}{%
+  \includegraphics[width=0.36\textwidth]{figures/vitap-logo.png}%
+}{%
+  {\Large\bfseries\color{vitblue}VIT-AP University}%
+}
+\end{center}
+
+\vspace{-0.3em}
+\begin{tcolorbox}[enhanced,colback=vitlight,colframe=vitblue,
+  boxrule=0.6pt,arc=2.5pt,left=6pt,right=6pt,top=4pt,bottom=5pt]
+\centering\small
+{\color{vitblue}\textbf{Team~5 --- Project Members}}\\[5pt]
+\begin{tabular}{ll}
+\toprule
+\textbf{Name} & \textbf{Roll number}\\
+\midrule
+Bellana Sai           & 24bca7931\\
+V.~Sai Prakash Yadav  & 24bce8525\\
+K.~Niharika           & 24BCE8516\\
+Sarvesh               & 24bcw7042\\
+K.~Sri Lakshmi        & 24BCS7106\\
+\bottomrule
+\end{tabular}
+\end{tcolorbox}
 
 %-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 \section{Introduction}
@@ -222,7 +301,8 @@ ablation study exploits.
 \caption{Design axes: representative approach classes versus P-LENS.}
 \label{tab:diff}
 \centering\small
-\begin{tabular}{lp{2.1cm}p{2.6cm}p{3.9cm}}
+\setlength{\tabcolsep}{4pt}%
+\begin{tabular}{L{2.6cm}L{1.7cm}L{2.2cm}L{3.4cm}}
 \toprule
 Class & Trigger & Change control & Main gap P-LENS targets\\
 \midrule
@@ -303,14 +383,46 @@ claim imported from prior work.
 
 \begin{figure}[t]
 \centering
-\fbox{\parbox{0.94\textwidth}{\centering\small
-failures/recovery $\rightarrow$ route \& load $\rightarrow$ monitor $D,F,C,R$
-$\rightarrow$ pressure $PP$ $\rightarrow$ debt $PD$ $\rightarrow$ budget $B$
-$\rightarrow$ mutation field $MF$ $\rightarrow$ selector $\rightarrow$ $G_{t+1}$
-$\rightarrow$ delayed counterfactual eval at $t{+}k$ $\rightarrow$ credit $MC$
-$\rightarrow$ feedback $PD(t{+}1), B(t{+}1)$}}
-\caption{The P-LENS control loop (one step). The machine-learning forecaster
-blends into the offered-load intensity target only.}
+\begin{tikzpicture}[
+  font=\scriptsize,
+  box/.style={draw=vitblue,very thick,rounded corners=2pt,fill=vitlight,
+              align=center,inner sep=3pt,minimum height=8mm,text width=15mm},
+  mlbox/.style={draw=vitaccent,very thick,rounded corners=2pt,
+              fill=vitaccent!12,align=center,inner sep=3pt,
+              minimum height=8mm,text width=18mm},
+  ar/.style={-{Latex[length=2mm]},thick,vitblue!85},
+  fb/.style={-{Latex[length=2mm]},thick,dashed,vitaccent!90}
+]
+%--- top row: physical/structural path (left to right)
+\node[box] (fail)  {Failures /\\recovery};
+\node[box,right=4mm of fail]  (route) {Route \&\\load};
+\node[box,right=4mm of route] (mon)   {Monitor\\$D,F,C,R$};
+\node[box,right=4mm of mon]   (pp)    {Pressure\\$PP$};
+\node[box,right=4mm of pp]    (pd)    {Debt\\$PD$};
+%--- second row: control decisions (right to left)
+\node[box,below=11mm of pd]  (bud) {Budget\\$B$};
+\node[box,left=4mm of bud]   (mf)  {Field\\$MF$};
+\node[box,left=4mm of mf]    (sel) {Selector};
+\node[box,left=4mm of sel]   (ev)  {Delayed\\eval / $MC$};
+%--- quarantined forecaster
+\node[mlbox,below=11mm of ev] (ml) {GRU stress\\forecaster};
+
+\draw[ar] (fail)  -- (route);
+\draw[ar] (route) -- (mon);
+\draw[ar] (mon)   -- (pp);
+\draw[ar] (pp)    -- (pd);
+\draw[ar] (pd)    -- (bud);
+\draw[ar] (bud)   -- (mf);
+\draw[ar] (mf)    -- (sel);
+\draw[ar] (sel)   -- (ev);
+%--- feedback: delayed credit re-enters the top of the loop
+\draw[ar] (ev.north) -- ++(0,4mm) -| (route.south);
+%--- quarantined ML path into the offered-load target only
+\draw[fb] (ml.east) -- ++(3mm,0) |- (route.south);
+\end{tikzpicture}
+\caption{The P-LENS control loop (one step). Solid blue arrows are the structural
+control path; the dashed gold path is the quarantined machine-learning forecaster,
+which modulates only the offered-load intensity $\iota$ of \eqref{eq:scale}.}
 \label{fig:loop}
 \end{figure}
 
@@ -531,14 +643,16 @@ $L$ & GRU history length & 12 & \\
 
 \paragraph{Demand sources.}
 Three demand sources are supported:
-\emph{synthetic}, a diurnal Poisson background of heavy-tailed flows with
-port-scan-like attack bursts;
-\emph{CIC-IDS2017} \cite{sharafaldin2018}, whose eight weekday files are used as
-a chronological stream (Monday--Tuesday train, Wednesday validation, Thursday
-test, Friday simulation), with windows formed over consecutive flow records; and
-\emph{UNSW-NB15} \cite{moustafa2015}, split chronologically. The dataset
-supplies traffic and condition information only; the topology is always
-simulated and never taken from the data.
+\begin{itemize}
+\item \emph{Synthetic}: a diurnal Poisson background of heavy-tailed flows with
+port-scan-like attack bursts.
+\item \emph{CIC-IDS2017} \cite{sharafaldin2018}: its eight weekday files are used
+as a chronological stream (Monday--Tuesday train, Wednesday validation, Thursday
+test, Friday simulation), with windows formed over consecutive flow records.
+\item \emph{UNSW-NB15} \cite{moustafa2015}: split chronologically.
+\end{itemize}
+The dataset supplies traffic and condition information only; the topology is
+always simulated and never taken from the data.
 
 \paragraph{Baselines and ablations.}
 All policies share the same constraints, per-step cap and random-number streams
@@ -759,7 +873,9 @@ simulator, and a larger multi-seed study with the paired test fully powered.
 %-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 \subsubsection*{Acknowledgements.}
-The authors thank the course staff for feedback. This is a class project; no
+This work was carried out as a class project by Team~5 at VIT-AP University,
+under the supervision of G.~Deepthi (Faculty, VIT-AP University). The authors
+thank the course staff and the anonymous reviewers for their feedback. No
 external funding was used.
 
 \bibliographystyle{splncs04}
