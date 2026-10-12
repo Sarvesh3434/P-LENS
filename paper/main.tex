@@ -26,13 +26,13 @@ Budgeted Topology Mutations}
 
 \titlerunning{P-LENS: Plasticity-Pressure-Driven Topology Adaptation}
 
-\author{Your Name\inst{1}\orcidID{0000-0000-0000-0000}}
+\author{Team~5\inst{1} \and G.~Deepthi\inst{1}}
 
-\authorrunning{Y.~Name}
+\authorrunning{Team~5 and G.~Deepthi}
 
-\institute{Department of Computer Networks, Your University,\\
-City, Country\\
-\email{your.name@example.edu}}
+\institute{VIT-AP University, Amaravati, Andhra Pradesh, India\\
+\email{team5@vitapstudent.ac.in}\\ % replace with your own address
+Supervised by G.~Deepthi (Faculty), VIT-AP University}
 
 \maketitle
 
@@ -115,7 +115,8 @@ including integration caveats that affect the machine-learning component
 \end{itemize}
 
 The remainder of the paper is organised as follows.
-Section~\ref{sec:related} reviews related work.
+Section~\ref{sec:related} reviews related work and
+Section~\ref{sec:diff} explains how P-LENS differs from it.
 Section~\ref{sec:prelim} fixes notation and the network model.
 Section~\ref{sec:framework} describes P-LENS.
 Section~\ref{sec:setup} presents the experimental setup,
@@ -156,6 +157,83 @@ models, in particular gated recurrent units (GRUs) \cite{cho2014} and LSTMs
 classification. P-LENS uses a small GRU \cite{paszke2019} strictly as a
 \emph{forecaster whose output modulates the offered-load intensity target}; it
 never chooses topology operations directly.
+
+%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+\section{How P-LENS Differs from Existing Work}
+\label{sec:diff}
+
+We are explicit about novelty: every individual \emph{ingredient} of P-LENS is
+known. Adaptive and self-healing reconfiguration, traffic-aware topology
+control, edge add/prune/rewire operations, degree and connectivity constraints,
+and recurrent traffic forecasting all appear in prior work. What is distinctive
+is how these are \emph{combined into one control loop with explicit accounting}
+of why, whether, and how much the topology should change. We contrast the design
+axes below; Table~\ref{tab:diff} summarises them.
+
+\paragraph{Composite, accumulated trigger.}
+Most self-healing schemes fire on a single signal---a fault, an SLA violation or
+a congestion threshold. P-LENS fuses four indicators, drift $D$, traffic
+mismatch $F$, congestion $C$ and resilience deficiency $R$, into a per-node
+pressure, and then integrates the \emph{unresolved} part over time as debt. A
+node that has been marginal for a long time is therefore treated differently
+from one that spiked briefly, which single-signal triggers cannot express.
+
+\paragraph{Budgeted change.}
+Reconfiguration is usually either unpriced (act whenever a rule fires) or
+bounded only by a hard per-step cap. P-LENS makes global change a first-class,
+refillable \emph{resource} that is spent by operations, earned back from debt
+and demonstrated benefit, and penalised by stability cost. The budget thus
+trades adaptation against churn explicitly, and the \texttt{no\_budget}
+ablation (\S\ref{sec:res-ablations}) shows this mechanism is load-bearing.
+
+\paragraph{Delayed, counterfactual credit assignment.}
+Many adaptive schemes are open-loop: they act but never measure whether the
+action helped. P-LENS evaluates each accepted mutation $k$ steps later by
+re-routing the same demand on a shadow topology with the mutation reversed, and
+folds the resulting gain into a per-edge credit that biases future scores
+(Eq.~\ref{eq:credit}). This is a cheap, simulation-only form of credit
+assignment for topology actions, absent from rule-based reconfiguration.
+
+\paragraph{Auditable, constraint-aware selection.}
+Instead of a monolithic policy, selection is a ranked, constraint-filtered
+process in which every rejected candidate is recorded with a machine-readable
+reason (\texttt{degree\_cap}, \texttt{would\_disconnect}, \texttt{cooldown},
+\dots). This makes the controller's decisions inspectable---unusual for learned
+or heuristic controllers, which tend to be opaque.
+
+\paragraph{Narrow, non-authoritative machine learning.}
+In reinforcement-learning approaches the learned model \emph{is} the policy. In
+P-LENS the GRU is deliberately quarantined: it forecasts traffic stress and only
+modulates the offered-load intensity target; it never selects operations. This
+keeps the structural control law interpretable and lets the learning component
+be ablated cleanly, at the current cost of a weak coupling
+(\S\ref{sec:limitations}).
+
+\paragraph{What is new versus assembled (honest summary).}
+The mechanisms overlap with prior art and we do not claim an architectural
+breakthrough. Our contribution is the specific \emph{composition}: a
+pressure/debt/budget loop closed by delayed per-edge credit, mutation volume
+treated as a budgeted resource, and an implementation plus evaluation protocol
+that makes the composition measurable and its failure modes visible. The
+individual pieces are individually replaceable, which is exactly what the
+ablation study exploits.
+
+\begin{table}[t]
+\caption{Design axes: representative approach classes versus P-LENS.}
+\label{tab:diff}
+\centering\small
+\begin{tabular}{lp{2.1cm}p{2.6cm}p{3.9cm}}
+\toprule
+Class & Trigger & Change control & Main gap P-LENS targets\\
+\midrule
+Static / redundant design & offline, manual & none & cannot react to drift or failures\\
+Self-healing autonomic & failures & rule-based, unbounded & single-signal trigger; no mutation budget\\
+Traffic engineering (SDN) & congestion / SLA & periodic global optimisation & no accumulated debt; no per-edge credit\\
+RL topology control & learned state & policy-imposed & opaque; the ML model is the policy\\
+\textbf{P-LENS} & composite $D,F,C,R$ + debt & budgeted, constraint-aware & (this work)\\
+\bottomrule
+\end{tabular}
+\end{table}
 
 %-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 \section{Preliminaries and Network Model}
