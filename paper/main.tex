@@ -330,13 +330,14 @@ operation of cost $c$ only if $B_t \ge c$.
 \subsection{Mutation field}
 \label{sec:field}
 
-The mutation field scores every candidate structural operation $op\in\{\text{ADD},
-\text{PRUNE},\text{REWIRE}\}$ on a candidate edge $(i,j)$:
+The mutation field scores every candidate structural operation $op$ (ADD, PRUNE
+or REWIRE) on a candidate edge $(i,j)$:
 \begin{equation}
+\begin{split}
 MF^{op}_{ij} = g(B_t, c_{op})\Bigl(
-w_n\,\text{need}_{ij} + w_d\,\text{debt}_{ij} + w_b\,\text{benefit}^{op}_{ij}
-+ w_c\,\text{credit}_{ij} - w_k\,\text{cost}_{op} - w_p\,\text{penalty}^{op}_{ij}
-\Bigr),
+&w_n\,\text{need}_{ij} + w_d\,\text{debt}_{ij} + w_b\,\text{benefit}^{op}_{ij}\\
+&+ w_c\,\text{credit}_{ij} - w_k\,\text{cost}_{op} - w_p\,\text{penalty}^{op}_{ij}\Bigr),
+\end{split}
 \label{eq:field}
 \end{equation}
 where $\text{need}_{ij}=\tfrac12(PP_i+PP_j)$ and

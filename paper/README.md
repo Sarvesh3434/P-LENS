@@ -8,6 +8,7 @@ Springer **LNCS** (`llncs.cls`) format.
 | File | Purpose |
 |---|---|
 | `main.tex` | The paper (Springer LNCS). |
+| `main.pdf` / `P-LENS-paper.pdf` | Compiled paper — this is the file to submit. |
 | `references.bib` | Bibliography. |
 | `llncs.cls`, `splncs04.bst` | Official Springer LNCS class + bib style (bundled). |
 | `figures/` | Figures copied from `../results/` (`policy_bars`, `ablation_bars`, `timeseries_*`, `topology_evolution`, `training_curves`). |
@@ -24,6 +25,11 @@ pdflatex main
 ```
 
 or simply `latexmk -pdf main`. The output is `main.pdf`.
+
+No LaTeX installed? [Tectonic](https://tectonic-typesetting.github.io) is a
+single self-contained binary that downloads only the packages it needs:
+`tectonic main.tex` produces `main.pdf` (this is how the committed PDF was
+built).
 
 The class file `llncs.cls` and style `splncs04.bst` are the official files from
 the Springer LNCS author kit, vendored here so the paper compiles offline. If you
