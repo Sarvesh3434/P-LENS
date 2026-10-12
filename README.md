@@ -33,6 +33,7 @@ component under `plens/`.
 | `experiments/` | `Config`, multi-seed runner with common random numbers, Wilcoxon stats, ablations |
 | `visualization/` | Timeseries, policy/ablation bars, topology evolution, training curves |
 | `tests/` | 79 pytest tests covering all components |
+| `paper/` | Springer LNCS research paper (`main.tex`) + bundled figures |
 | `main.py` | End-to-end pipeline entry point |
 
 ## Quickstart
@@ -123,3 +124,9 @@ simulation-only oracle, and per-flow share model is a bottleneck proxy — see t
 Everything lives in `experiments/config.py::Config` (dataclass, one line of
 comment per parameter): topology type/size, traffic intensity, failure rates,
 all P-LENS weights/costs/limits, ML hyperparameters, dataset paths.
+
+## Paper
+
+A Springer LNCS write-up of the framework, results and limitations lives in
+`paper/` (build with `pdflatex main; bibtex main; pdflatex main`). It reuses the
+figures and JSON artifacts in `results/`.
