@@ -1,14 +1,21 @@
-"""[DIAGRAM] Constraint-aware selector. Never picks at random.
+"""Constraint-aware, interaction-aware mutation selector.
 
-Candidates are ranked by their mutation-field score and accepted in order while
-the budget, the hard constraints and cfg.max_mutations_per_step allow. Every
-rejected candidate is recorded with its reason; selections are applied
-sequentially so later candidates see the earlier ones (no double-booking of an
-edge or endpoint within a step).
+Two modes are supported:
 
-Output per accepted mutation: op, i, j (, l), score, reason, budget_cost,
-detail (what to add/remove — used for history, cooldown, reversal).
-The rejected list feeds the audit trail: (candidate, reason).
+* ``marginal`` — sort by the mutation-field score and accept greedily.
+* ``interaction`` (default) — at each iteration pick the remaining candidate
+  with the highest ``score + w_I * sum_{s in S} I(c,s)``, where ``I`` is the
+  pairwise interaction model in :mod:`plens.interaction`.  This lets the
+  controller choose complementary pairs (e.g. an ADD on a congested pair plus a
+  PRUNE that frees a degree slot) and avoid redundant or conflicting ones.
+
+Both modes apply the same budget, per-step cap and hard topology constraints.
+Every rejected candidate is recorded with a machine-readable reason.
+
+Performance note: the field contains O(n^2) candidates and most are infeasible
+at a given topology.  We pre-filter cheap constraints and re-rank only a small
+top window after each accepted mutation, instead of calling the interaction
+model for every candidate on every iteration.
 """
 
 from __future__ import annotations
@@ -18,6 +25,47 @@ from typing import Dict, List, Set, Tuple
 from experiments.config import Config
 from network.graph import EvolvingNetwork, canon
 from plens import mutations as muts
+from plens.interaction import adjusted_score
+
+_WINDOW = 64
+
+
+def _cheap_feasible(
+    net: EvolvingNetwork,
+    c: dict,
+    cfg: Config,
+    cooldown: Dict[Tuple[int, int], int],
+) -> bool:
+    i, j = int(c["i"]), int(c["j"])
+    if i == j or net.nodes[i].failed or net.nodes[j].failed:
+        return False
+    op = c["op"]
+    if op in ("ADD", "PRUNE") and cooldown.get(canon(i, j), 0) > 0:
+        return False
+    if op == "ADD":
+        if net.G.has_edge(i, j):
+            return False
+        if net.degree(i) >= cfg.max_degree or net.degree(j) >= cfg.max_degree:
+            return False
+        return True
+    if op == "PRUNE":
+        if not net.G.has_edge(i, j):
+            return False
+        if net.degree(i) <= cfg.min_degree or net.degree(j) <= cfg.min_degree:
+            return False
+        return True
+    if op == "REWIRE":
+        l = int(c.get("l", -1))
+        if l < 0 or l == i or l == j:
+            return False
+        if net.nodes[l].failed or cooldown.get(canon(i, l), 0) > 0:
+            return False
+        if not net.G.has_edge(i, j) or net.G.has_edge(i, l):
+            return False
+        if net.degree(l) >= cfg.max_degree or net.degree(j) <= cfg.min_degree:
+            return False
+        return True
+    return False
 
 
 def select_mutations(
@@ -26,47 +74,61 @@ def select_mutations(
     budget: float,
     cfg: Config,
     cooldown: Dict[Tuple[int, int], int],
+    interaction_weight: float | None = None,
 ) -> Tuple[List[dict], List[dict]]:
-    ranked = sorted(field, key=lambda x: x["score"], reverse=True)
     chosen: List[dict] = []
     rejected: List[dict] = []
+    remaining = [c for c in field if _cheap_feasible(net, c, cfg, cooldown)]
+    remaining.sort(key=lambda c: c["score"], reverse=True)
     spent = 0.0
     used_edges: Set[Tuple[int, int]] = set()
+    weight = cfg.interaction_weight if interaction_weight is None else interaction_weight
 
-    for cand in ranked:
-        if len(chosen) >= cfg.max_mutations_per_step:
-            break
-        op = cand["op"]
+    while remaining and len(chosen) < cfg.max_mutations_per_step:
+        window = remaining[:_WINDOW]
+        best = max(window, key=lambda c: adjusted_score(c, chosen, net, cfg, weight))
+        remaining.remove(best)
+
+        op = best["op"]
         cost = cfg.mutation_cost[op]
         if spent + cost > budget + 1e-9:
-            rejected.append({**cand, "reason": "insufficient_budget"})
+            rejected.append({**best, "reason": "insufficient_budget"})
             continue
-        ok, reason = muts.validate(net, cand, cfg, cooldown)
+        ok, reason = muts.validate(net, best, cfg, cooldown)
         if not ok:
-            rejected.append({**cand, "reason": reason})
+            rejected.append({**best, "reason": reason})
             continue
-        applied, detail = muts.apply(net, cand)
+        applied, detail = muts.apply(net, best)
         if not applied:
-            rejected.append({**cand, "reason": "apply_failed"})
+            rejected.append({**best, "reason": "apply_failed"})
             continue
-        edge_key = canon(cand["i"], cand.get("l", cand["j"]))
+        edge_key = canon(best["i"], best.get("l", best["j"]))
         if edge_key in used_edges:
             muts.revert_one(net, detail)
-            rejected.append({**cand, "reason": "edge_already_used_this_step"})
+            rejected.append({**best, "reason": "edge_already_used_this_step"})
             continue
         used_edges.add(edge_key)
         if op == "REWIRE":
-            used_edges.add(canon(cand["i"], cand["j"]))
+            used_edges.add(canon(best["i"], best["j"]))
         spent += cost
         chosen.append(
             {
-                **cand,
+                **best,
                 "accepted": True,
                 "reason": reason,
                 "budget_cost": cost,
                 "detail": detail,
-                "score": cand["score"],
+                "interaction_bonus": float(
+                    adjusted_score(best, chosen[:-1], net, cfg, weight) - best["score"]
+                ),
             }
         )
+        # Topology changed: cheap constraints and consumed edges must be refreshed.
+        remaining = [
+            c
+            for c in remaining
+            if canon(c["i"], c.get("l", c["j"])) not in used_edges
+            and _cheap_feasible(net, c, cfg, cooldown)
+        ]
     # mutations stay applied: they ARE G_{t+1} [DIAGRAM: Evolving Network Topology]
     return chosen, rejected

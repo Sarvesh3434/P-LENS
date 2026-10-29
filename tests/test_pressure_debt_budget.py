@@ -1,10 +1,10 @@
-"""[DIAGRAM] PP, PD, B — the pressure/debt/budget dashed group of the image."""
+﻿"""[DIAGRAM] PP, PD, B — the pressure/debt/budget dashed group of the image."""
 from __future__ import annotations
 
 import numpy as np
 
 from plens.pressure import plasticity_pressure
-from plens.debt import update_debt, relief_for_mutation
+from plens.debt import DebtState, update_debt, relief_for_mutation
 from plens.budget import update_budget, gate
 
 
@@ -43,21 +43,24 @@ def test_pressure_clipped(cfg):
 
 def test_debt_accumulates_and_decays(cfg):
     n = 4
-    pd = np.zeros(n)
-    pp = np.full(n, 0.5)
-    pd1 = update_debt(pd, pp, relief=np.zeros(n), cfg=cfg)
-    assert np.allclose(pd1, cfg.debt_accumulation * 0.5)
-    pd2 = update_debt(pd1, pp, relief=np.zeros(n), cfg=cfg)
-    assert np.allclose(pd2, cfg.debt_decay * pd1 + cfg.debt_accumulation * 0.5)
+    state = DebtState.zeros(n)
+    pp = np.full(n, 0.8)
+    crit = np.ones(n)
+    s1 = update_debt(state, pp, np.zeros(n), crit, cfg)
+    assert np.all(s1.pd > 0) and np.all(s1.persistence > 0)
+    s2 = update_debt(s1, pp, np.zeros(n), crit, cfg)
+    assert np.all(s2.pd >= s1.pd)
+    s3 = update_debt(s2, np.zeros(n), np.zeros(n), crit, cfg)
+    assert np.all(s3.pd < s2.pd)
 
 
 def test_debt_relief_reduces_and_clips_at_zero(cfg):
     n = 4
-    pd = np.full(n, 0.2)
+    state = DebtState(pd=np.full(n, 0.2), persistence=np.zeros(n), duration=np.zeros(n))
     pp = np.zeros(n)
     big_relief = np.full(n, 1.0)
-    pd1 = update_debt(pd, pp, relief=big_relief, cfg=cfg)
-    assert np.allclose(pd1, 0.0)
+    s1 = update_debt(state, pp, big_relief, np.ones(n), cfg)
+    assert np.allclose(s1.pd, 0.0)
 
 
 def test_relief_only_for_touched_nodes(cfg):
@@ -68,24 +71,27 @@ def test_relief_only_for_touched_nodes(cfg):
 
 
 def test_debt_disabled_returns_zero(cfg):
-    pd = np.full(4, 0.5)
-    out = update_debt(pd, np.zeros(4), np.zeros(4), cfg, enabled=False)
-    assert np.allclose(out, 0.0)
+    state = DebtState(pd=np.full(4, 0.5), persistence=np.zeros(4), duration=np.zeros(4))
+    out = update_debt(state, np.zeros(4), np.zeros(4), np.ones(4), cfg, enabled=False)
+    assert np.allclose(out.pd, 0.0)
 
 
 def test_budget_spends_and_refills_from_debt(cfg):
     b = 5.0
     spent = 2.0
     mean_pd = 0.4
-    b1 = update_budget(b, spent, mean_pd, 0.0, 0.0, cfg)
+    b1 = update_budget(b, spent, mean_pd, 0.0, 0.0, cfg, mode="legacy")
     expected = min(cfg.mutation_budget_max, b - spent + cfg.budget_refill * mean_pd)
     assert np.isclose(b1, expected)
 
 
 def test_budget_gain_raises_and_stability_lowers(cfg):
+    from dataclasses import replace
+
+    c = replace(cfg, budget_base_refill=0.0)
     b0 = 3.0
-    up = update_budget(b0, 0.0, 0.0, 0.5, 0.0, cfg)
-    down = update_budget(b0, 0.0, 0.0, 0.0, 0.5, cfg)
+    up = update_budget(b0, 0.0, 0.0, 0.5, 0.0, c)
+    down = update_budget(b0, 0.0, 0.0, 0.0, 0.5, c)
     assert up > b0
     assert down < b0
 
@@ -105,3 +111,4 @@ def test_budget_disabled_pins_to_max(cfg):
 def test_gate_requires_min_cost(cfg):
     assert gate(0.0, cfg.mutation_cost["ADD"]) == 0.0
     assert gate(cfg.mutation_cost["ADD"], cfg.mutation_cost["ADD"]) == 1.0
+

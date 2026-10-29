@@ -1,4 +1,4 @@
-"""[ASSUMPTION] Central configuration. Every parameter has a documented reason."""
+﻿"""[ASSUMPTION] Central configuration. Every parameter has a documented reason."""
 
 from __future__ import annotations
 
@@ -42,12 +42,16 @@ class Config:
 
     # --- simulation [SIM] ---
     simulation_steps: int = 120
+    traffic_pattern: str = "stationary"  # stationary | shift | periodic | bursty
+    failure_mode: str = "random"  # random | targeted | multi | recovery
+    sla_latency_ms: float = 2000.0  # SLA threshold for tail/SLA metrics [SIM] (queue term is normalised to <=1 s)
+    sla_loss: float = 0.05
     traffic_intensity: float = 0.55  # target median utilization after scaling
     failure_rate_edge: float = 0.01
     failure_rate_node: float = 0.001
     repair_steps: int = 5
     seed: int = 7
-    n_seeds: int = 3  # demo default; paper-style runner uses 30
+    n_seeds: int = 3  # demo default; the study runner overrides to 30
     mm1_service_rate: float = 1.2e6  # packets-or-bytes proxy / step [SIM]
     routing_alpha: float = 2.0  # congestion sensitivity of routing weights [ASSUMPTION]
     hop_epsilon: float = 1e-4  # tiny per-hop cost, breaks weight ties [ASSUMPTION]
@@ -57,7 +61,16 @@ class Config:
     mutation_budget_initial: float = 3.0
     mutation_budget_min: float = 0.0
     mutation_budget_max: float = 8.0
-    budget_refill: float = 1.0
+    budget_mode: str = "adaptive"  # adaptive | fixed | legacy
+    budget_refill: float = 0.8
+    budget_base_refill: float = 2.5  # per-step account replenishment [ASSUMPTION]
+    budget_adapt: float = 0.25
+    budget_marginal_target: float = 0.10
+    budget_uncertainty_z: float = 1.0
+    budget_overload_window: int = 8
+    budget_overload_threshold: float = 0.65
+    budget_overload_damping: float = 0.5
+    budget_failure_damping: float = 0.35
     eta_g: float = 0.5
     eta_s: float = 0.4
     mutation_cost: Dict[str, float] = field(
@@ -82,19 +95,41 @@ class Config:
             "penalty": 1.2,
         }
     )
-    debt_decay: float = 0.9
-    debt_accumulation: float = 0.2
-    debt_relief: float = 0.15
+    # --- debt: unresolved structural inadequacy over time [ASSUMPTION] ---
+    debt_tolerance: float = 0.35  # deadband: only excess pressure accumulates
+    debt_accumulation: float = 0.18  # eta: increment toward saturation
+    debt_decay: float = 0.12  # gamma: leak when the pressure is resolved
+    debt_persist_beta: float = 0.75  # persistence evidence EMA
+    debt_duration_tau: float = 3.0  # duration saturation constant
+    debt_relief: float = 0.20  # max relief per successful mutation
+    debt_failure_penalty: float = 0.04  # debt added by an unsuccessful mutation
+    debt_gain_relief: float = 0.50  # relief scales with the counterfactual gain
+    criticality_floor: float = 0.50  # criticality weight floor
     pressure_ema: float = 0.4
     credit_lambda: float = 0.7
     cooldown_steps: int = 4
     max_mutations_per_step: int = 4
-    eval_mode: str = "counterfactual"  # counterfactual | before_after
-    policy: str = "plens"  # plens | static | random | greedy
-    ablation: str = "none"  # none | no_ml | no_debt | no_credit | no_budget
+
+    # --- interaction-aware selection ---
+    interaction_weight: float = 0.35
+    interaction_radius: int = 1  # neighbourhood for complementarity
+
+    # --- counterfactual evaluation ---
+    eval_mode: str = "replay_counterfactual"  # replay_counterfactual | shadow | before_after | immediate
+    cf_bootstrap: int = 0  # matched-demand bootstrap replicates (0 = cheap stepwise paired uncertainty)
+    cf_z: float = 1.0  # lower-confidence-bound multiplier
+    cf_min_effect: float = 0.005  # below this the credit update is suppressed
+    cf_min_confidence: float = 0.20  # uncertainty gate for credit updates
+    cf_perturb_sigma: float = 0.15  # lognormal OD perturbation for bootstrap
+
+    policy: str = "plens"  # plens | static | random | greedy | threshold | fixed_budget | adaptive_budget | optimization | bandit
+    ablation: str = "none"  # none | no_ml | no_debt | no_credit | no_budget | no_uncertainty | no_interaction | fixed_score | no_counterfactual | no_evaluation
+    threshold_trigger: float = 0.55  # threshold baseline trigger on max PP
+    bandit_ucb_c: float = 0.6  # exploration constant for the learning baseline
 
     # --- ML [ML] ---
     window_length_L: int = 12
+    ml_horizon: int = 3  # forecast lead in windows
     flows_per_window: int = 400
     gru_hidden: int = 64
     gru_layers: int = 2
@@ -103,9 +138,14 @@ class Config:
     batch_size: int = 32
     learning_rate: float = 1e-3
     patience: int = 5
-    ml_blend_beta: float = 0.3  # mix forecast into F_i, C_i only
+    use_class_weights: bool = True
+    ml_blend_beta: float = 0.3
+    ml_prior_attack: float = 0.20
+    ml_load_gain: float = 0.35  # offered-load correction from p(attack)
+    ml_budget_gain: float = 0.25  # budget urgency from p(attack)
+    ml_uncertainty_damping: float = 0.25  # budget damping from forecast entropy
     stress_scales: Dict[str, float] = field(
-        default_factory=lambda: {"Low": 0.7, "Medium": 1.0, "High": 1.3}
+        default_factory=lambda: {"Normal": 0.85, "Attack": 1.25}
     )
     max_train_windows: int = 4000  # cap so CPU training stays in demo territory
     max_rows_per_file: int = 200000  # [ASSUMPTION] stream cap per CIC/UNSW file (200k => ~500 windows/file)
@@ -163,3 +203,9 @@ def default_config(**overrides) -> Config:
     for k, v in overrides.items():
         setattr(cfg, k, v)
     return cfg
+
+
+
+
+
+

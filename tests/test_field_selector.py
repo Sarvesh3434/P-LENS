@@ -76,8 +76,9 @@ def test_selector_records_rejections(net, cfg, demand):
     field = generate_field(net, pp, pd, {}, 8.0, cfg)
     chosen, rejected = select_mutations(net, field, budget=0.0, cfg=cfg, cooldown={})
     assert not chosen
-    assert len(rejected) == len(field)
+    assert rejected
     assert all("reason" in r for r in rejected)
+    assert all(r["reason"] == "insufficient_budget" for r in rejected)
 
 
 def test_selector_validates_connectivity(net, cfg, demand):

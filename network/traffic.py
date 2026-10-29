@@ -112,6 +112,8 @@ def route_and_load(net: EvolvingNetwork) -> Dict[str, float]:
     delivered_total = 0.0
     latency_acc = 0.0
     node_delivered = {i: 0.0 for i in net.nodes}
+    flow_latencies: List[float] = []
+    flow_losses: List[float] = []
     flows: List[Tuple[float, list, int, int]] = []  # (vol, edges_on_path, src, dst)
     demand = net.demand
     n = net.n
@@ -176,6 +178,8 @@ def route_and_load(net: EvolvingNetwork) -> Dict[str, float]:
         node_delivered[i] += delivered
         node_delivered[j] += delivered
         latency_acc += path_lat * delivered
+        flow_latencies.append(path_lat)
+        flow_losses.append(1.0 - share)
 
     for i, nd in net.nodes.items():
         bw = 0.0
@@ -206,7 +210,24 @@ def route_and_load(net: EvolvingNetwork) -> Dict[str, float]:
         nd.loss = min(1.0, max(0.0, 1.0 - node_delivered[i] / max(denom, 1e-9))) if not nd.failed else 1.0
 
     avg_lat = latency_acc / max(delivered_total, 1e-9)
+    if flow_latencies:
+        lat_arr = np.asarray(flow_latencies, dtype=float)
+        loss_arr = np.asarray(flow_losses, dtype=float)
+        lat_p95 = float(np.percentile(lat_arr, 95))
+        lat_p99 = float(np.percentile(lat_arr, 99))
+        sla_lat = net.cfg.sla_latency_ms / 1000.0
+        sla_lat_viol = float(np.mean(lat_arr > sla_lat))
+        sla_loss_viol = float(np.mean(loss_arr > net.cfg.sla_loss))
+        sla_viol = float(np.mean((lat_arr > sla_lat) | (loss_arr > net.cfg.sla_loss)))
+    else:
+        lat_p95 = lat_p99 = 0.0
+        sla_lat_viol = sla_loss_viol = sla_viol = 0.0
     metrics = {
+        "latency_p95": lat_p95,
+        "latency_p99": lat_p99,
+        "sla_latency_violation": sla_lat_viol,
+        "sla_loss_violation": sla_loss_viol,
+        "sla_violation": sla_viol,
         "latency": float(avg_lat),
         "throughput": float(throughput),
         "loss": float(loss_frac),

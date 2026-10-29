@@ -1,4 +1,4 @@
-"""[ML][SIM] Synthetic traffic-window generator + visualization helpers."""
+﻿"""[ML][SIM] Synthetic traffic-window generator + visualization helpers."""
 from __future__ import annotations
 
 import matplotlib
@@ -22,10 +22,10 @@ from visualization.plots import (
 
 def test_synthetic_shapes_match_feature_names():
     cfg = default_config(network_size=10, synthetic_windows=40)
-    feats, dem, metas = synthetic_windows(cfg, n_windows=40, seed=0)
+    feats, dem, labels, metas = synthetic_windows(cfg, n_windows=40, seed=0)
     assert feats.shape == (40, len(FEATURE_NAMES))
     assert dem.shape == (40, 10, 10)
-    assert len(metas) == 40
+    assert len(metas) == 40 and len(labels) == 40
     assert np.isfinite(feats).all()
     # demand symmetric, zero diagonal [SIM]
     assert np.allclose(dem, np.transpose(dem, (0, 2, 1)))
@@ -34,7 +34,7 @@ def test_synthetic_shapes_match_feature_names():
 
 def test_synthetic_diurnal_changes_load():
     cfg = default_config(network_size=8, synthetic_windows=96, synthetic_diurnal=True)
-    feats, _, _ = synthetic_windows(cfg, n_windows=96, seed=1)
+    feats, _, _, _ = synthetic_windows(cfg, n_windows=96, seed=1)
     # flow_count column: night windows should be quieter than the day peak
     fc = feats[:, 0]
     assert fc.max() > 1.5 * fc.min()
@@ -42,8 +42,8 @@ def test_synthetic_diurnal_changes_load():
 
 def test_synthetic_deterministic_per_seed():
     cfg = default_config(network_size=8, synthetic_windows=20)
-    f1, d1, _ = synthetic_windows(cfg, n_windows=20, seed=5)
-    f2, d2, _ = synthetic_windows(cfg, n_windows=20, seed=5)
+    f1, d1, _, _ = synthetic_windows(cfg, n_windows=20, seed=5)
+    f2, d2, _, _ = synthetic_windows(cfg, n_windows=20, seed=5)
     assert np.array_equal(f1, f2)
     assert np.array_equal(d1, d2)
 
@@ -74,7 +74,7 @@ def _tiny_run(cfg: Config, seed: int = 7) -> dict:
     from ml.synthetic import synthetic_windows as sw
 
     cfg2 = Config(**{**cfg.__dict__, "seed": seed})
-    _, dem, _ = sw(cfg2, n_windows=cfg.simulation_steps, seed=seed)
+    _, dem, _, _ = sw(cfg2, n_windows=cfg.simulation_steps, seed=seed)
     return run_simulation(cfg2, dem)
 
 
@@ -123,3 +123,4 @@ def test_training_curves(tmp_path):
     mp.write_text(json.dumps(meta))
     p = training_curves(mp, tmp_path)
     assert p.exists() and p.name == "training_curves.png"
+

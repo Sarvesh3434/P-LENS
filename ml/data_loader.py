@@ -1,9 +1,17 @@
-"""[ML] Load CIC-IDS2017 MachineLearningCVE and UNSW-NB15 shuffled splits.
+"""[ML] Load CIC-IDS2017 MachineLearningCVE and UNSW-NB15 records.
+
+Leakage-free feature contract
+-----------------------------
+The nine columns in ``FEATURE_NAMES`` are computed *before* the label is known
+and contain no attack indicator.  The binary attack/normal label is returned in
+a separate ``labels`` array and is used only as the supervised target.  This is
+enforced by the loader API itself, so the model cannot accidentally consume the
+target as an input.
 
 [ASSUMPTION] These files have no Timestamp and no Source IP. Time is file order
-then row order. Endpoints are hashed from Destination Port (CIC) or proto/service (UNSW).
-The dataset supplies traffic/condition information only — not topology.
-Attack labels are NEVER used as model inputs.
+then row order. Endpoints are hashed from Destination Port (CIC) or
+proto/service (UNSW). The dataset supplies traffic/condition information only;
+the topology itself is simulated.
 """
 
 from __future__ import annotations
@@ -18,6 +26,7 @@ import numpy as np
 from experiments.config import Config
 
 
+# Nine pre-label traffic features.  Deliberately no "attack_flag" column.
 FEATURE_NAMES = [
     "flow_count",
     "pkt_rate",
@@ -28,7 +37,6 @@ FEATURE_NAMES = [
     "mean_fwd_bytes",
     "mean_bwd_bytes",
     "unique_ports_frac",
-    "attack_flag",  # 1 if any flow in window is an attack, else 0  [ML]
 ]
 
 
@@ -100,7 +108,18 @@ def iter_unsw_rows(path: Path) -> Iterator[dict]:
             }
 
 
-def _flush_window(buf: List[dict], n_nodes: int, kind: str) -> Tuple[np.ndarray, np.ndarray, Dict]:
+def _label_from_row(row: dict, kind: str) -> int:
+    lab = str(row.get("label", "")).strip()
+    if not lab:
+        return 0
+    if kind == "cic":
+        return int(lab.upper() != "BENIGN")
+    return int(lab.lower() not in ("0", "normal"))
+
+
+def _flush_window(
+    buf: List[dict], n_nodes: int, kind: str
+) -> Tuple[np.ndarray, np.ndarray, int, Dict]:
     n = len(buf)
     pkts = sum(r["fwd_pkts"] + r["bwd_pkts"] for r in buf)
     byts = sum(r["fwd_bytes"] + r["bwd_bytes"] for r in buf)
@@ -116,7 +135,6 @@ def _flush_window(buf: List[dict], n_nodes: int, kind: str) -> Tuple[np.ndarray,
             sum(r["fwd_bytes"] for r in buf) / max(n, 1),
             sum(r["bwd_bytes"] for r in buf) / max(n, 1),
             0.0,
-            0.0,
         ],
         dtype=np.float64,
     )
@@ -128,48 +146,47 @@ def _flush_window(buf: List[dict], n_nodes: int, kind: str) -> Tuple[np.ndarray,
             ports.add(r["dst_port"])
             src = _crc_node(f"src:{r['dst_port']}", n_nodes, "src")
             dst = _crc_node(f"dst:{r['dst_port']}", n_nodes, "dst")
-            lab = r["label"].upper()
-            if lab and lab != "BENIGN":
-                attack_frac += 1.0
         else:
             src = _crc_node(r.get("proto", "") + r.get("service", ""), n_nodes, "src")
             dst = _crc_node(r.get("service", "") + r.get("proto", "")[::-1], n_nodes, "dst")
-            lab = r["label"]
-            if lab and lab not in ("0", "Normal", "normal"):
-                attack_frac += 1.0
+        attack_frac += _label_from_row(r, kind)
         if src == dst:
             dst = (dst + 1) % n_nodes
         demand[src, dst] += r["fwd_bytes"] + r["bwd_bytes"]
     feat[8] = len(ports) / max(n, 1) if kind == "cic" else 0.0
-    feat[9] = 1.0 if attack_frac > 0 else 0.0
+    # The label is produced only after every feature has been computed.
+    label = int(attack_frac > 0)
     meta = {"attack_frac": attack_frac / max(n, 1), "n_flows": n}
-    return feat, demand, meta
+    return feat, demand, label, meta
 
 
 def windows_from_rows(rows: Iterator[dict], cfg: Config, kind: str):
     buf: List[dict] = []
-    feats, demands, metas = [], [], []
+    feats, demands, labels, metas = [], [], [], []
     wsize = cfg.flows_per_window
     n_rows = 0
     for r in rows:
         buf.append(r)
         n_rows += 1
         if len(buf) >= wsize:
-            f, d, m = _flush_window(buf, cfg.network_size, kind)
+            f, d, y, m = _flush_window(buf, cfg.network_size, kind)
             feats.append(f)
             demands.append(d)
+            labels.append(y)
             metas.append(m)
             buf = []
         if cfg.max_rows_per_file and n_rows >= cfg.max_rows_per_file:
             break
     if buf:
-        f, d, m = _flush_window(buf, cfg.network_size, kind)
+        f, d, y, m = _flush_window(buf, cfg.network_size, kind)
         feats.append(f)
         demands.append(d)
+        labels.append(y)
         metas.append(m)
     return (
         np.stack(feats) if feats else np.zeros((0, len(FEATURE_NAMES))),
         np.stack(demands) if demands else np.zeros((0, cfg.network_size, cfg.network_size)),
+        np.asarray(labels, dtype=np.int64),
         metas,
     )
 
@@ -177,6 +194,7 @@ def windows_from_rows(rows: Iterator[dict], cfg: Config, kind: str):
 def load_cic_windows(cfg: Config):
     feats_all = []
     dem_all = []
+    lab_all = []
     meta_all = []
     file_bounds = []  # (name, start, end)
     start = 0
@@ -184,28 +202,31 @@ def load_cic_windows(cfg: Config):
         path = cfg.cic_dir() / name
         if not path.exists():
             raise FileNotFoundError(path)
-        f, d, m = windows_from_rows(iter_cic_rows(path), cfg, "cic")
+        f, d, y, m = windows_from_rows(iter_cic_rows(path), cfg, "cic")
         feats_all.append(f)
         dem_all.append(d)
+        lab_all.append(y)
         meta_all.extend(m)
         end = start + len(f)
         file_bounds.append((name, start, end))
         start = end
     feats = np.concatenate(feats_all, axis=0) if feats_all else np.zeros((0, len(FEATURE_NAMES)))
     dem = np.concatenate(dem_all, axis=0)
-    return feats, dem, meta_all, file_bounds
+    labels = np.concatenate(lab_all, axis=0) if lab_all else np.zeros((0,), dtype=np.int64)
+    return feats, dem, labels, meta_all, file_bounds
 
 
 def load_unsw_windows(cfg: Config):
     train_p = cfg.unsw_dir() / "UNSW_NB15_training-set.csv"
     test_p = cfg.unsw_dir() / "UNSW_NB15_testing-set.csv"
-    f1, d1, m1 = windows_from_rows(iter_unsw_rows(train_p), cfg, "unsw")
-    f2, d2, m2 = windows_from_rows(iter_unsw_rows(test_p), cfg, "unsw")
+    f1, d1, y1, m1 = windows_from_rows(iter_unsw_rows(train_p), cfg, "unsw")
+    f2, d2, y2, m2 = windows_from_rows(iter_unsw_rows(test_p), cfg, "unsw")
     feats = np.concatenate([f1, f2], axis=0)
     dem = np.concatenate([d1, d2], axis=0)
+    labels = np.concatenate([y1, y2], axis=0)
     metas = m1 + m2
     bounds = [("UNSW_train", 0, len(f1)), ("UNSW_test", len(f1), len(f1) + len(f2))]
-    return feats, dem, metas, bounds
+    return feats, dem, labels, metas, bounds
 
 
 def chronological_split(n: int, bounds=None):

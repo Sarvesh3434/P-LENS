@@ -1,11 +1,12 @@
-"""[ML][SIM] Synthetic traffic-window generator for dataset="synthetic".
+"""Synthetic traffic-window generator for dataset="synthetic".
 
 Why: the pipeline should be runnable end-to-end without the external CIC-IDS2017
 / UNSW-NB15 files (e.g. on a fresh machine, in CI, or for debugging). The
-generator produces per-window aggregate features with the same columns and the
-same column order as FEATURE_NAMES, plus a per-window demand matrix, so every
-downstream consumer (scaler, stress map, GRU, simulation) works unchanged.
-[ASSUMPTION] This is a stand-in traffic model, not a claim about real datasets:
+generator produces per-window aggregate features with the same nine columns and
+the same column order as ``FEATURE_NAMES``, a per-window demand matrix, and a
+*separate* binary label, so every downstream consumer (scaler, GRU, simulation)
+works unchanged and the label is never a model input. [ASSUMPTION] This is a
+stand-in traffic model, not a claim about real datasets:
 
 - background flows arrive as a Poisson process whose rate follows a diurnal
   sinusoid (peak mid-window) when cfg.synthetic_diurnal is on;
@@ -13,11 +14,8 @@ downstream consumer (scaler, stress map, GRU, simulation) works unchanged.
   distributions);
 - a fraction of windows get an attack burst (port-scan-like: many tiny flows to
   many distinct destination ports), which raises flow_count/pkt_rate and thus
-  the composite stress label;
-- endpoints are drawn uniformly (uniform CRC-free — no hashing needed here).
-
-Labels are NOT produced here: stress classes still come from the training-ECDF
-tertiles in ml.preprocessing.fit_stress_map, exactly as for real data. [ML]
+  the stress label;
+- endpoints are drawn uniformly (no hashing needed here).
 """
 
 from __future__ import annotations
@@ -34,18 +32,20 @@ def synthetic_windows(
     cfg: Config,
     n_windows: int | None = None,
     seed: int = 1234,
-) -> Tuple[np.ndarray, np.ndarray, List[dict]]:
-    """Generate (feats, demands, metas) shaped exactly like the real loaders.
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[dict]]:
+    """Generate (feats, demands, labels, metas) shaped exactly like the loaders.
 
-    feats:  (W, len(FEATURE_NAMES)) float64 — same columns as FEATURE_NAMES
+    feats:  (W, len(FEATURE_NAMES)) float64 — nine pre-label traffic features
     demands: (W, n, n) float64 — per-window demand matrices
-    metas:  list of {"attack_frac", "n_flows"} dicts, same keys as real loaders
+    labels: (W,) int64 — 1 iff the window contains an attack burst
+    metas:  list of {"attack_frac", "n_flows"} dicts
     """
     rng = np.random.default_rng(seed)
     W = n_windows if n_windows is not None else cfg.synthetic_windows
     n = cfg.network_size
     feats = np.zeros((W, len(FEATURE_NAMES)), dtype=np.float64)
     demands = np.zeros((W, n, n), dtype=np.float64)
+    labels = np.zeros((W,), dtype=np.int64)
     metas: List[dict] = []
 
     t = np.arange(W, dtype=np.float64)
@@ -88,6 +88,7 @@ def synthetic_windows(
         ports = rng.integers(1, 65536, size=n_flows)
         unique_ports_frac = len(np.unique(ports)) / max(n_flows, 1)
 
+        # Nine features only.  The label is written to a separate array below.
         feats[w] = [
             float(n_flows),
             float(pkts.sum()),
@@ -98,8 +99,8 @@ def synthetic_windows(
             float(fwd_bytes.mean()),
             float(bwd_bytes.mean()),
             float(unique_ports_frac),
-            float(attack_windows[w]),  # attack_flag: 1.0 iff an attack burst fired [ML]
         ]
+        labels[w] = int(attack_windows[w])
 
         # demand matrix: bytes between endpoint pairs, symmetrised [SIM]
         d = np.zeros((n, n), dtype=np.float64)
@@ -113,4 +114,4 @@ def synthetic_windows(
                 "n_flows": int(n_flows),
             }
         )
-    return feats, demands, metas
+    return feats, demands, labels, metas

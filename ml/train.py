@@ -1,14 +1,14 @@
-"""[ML] Train GRU with early stopping on validation macro-F1. Frozen later during sim.
+"""[ML] Train the GRU stress forecaster with a leakage-free target.
 
-2-class Normal-vs-Attack stress target. Labels come from the CIC/UNSW raw attack
-column via the data loader, which now appends an "attack_flag" per window.
-[ML]
+The model sees only the nine pre-label traffic features defined in
+``ml.data_loader.FEATURE_NAMES``.  The binary attack/normal target is supplied
+in a separate array.  Preprocessing is fit on the training split only, the
+split is chronological, and early stopping uses validation macro-F1.
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import joblib
 import numpy as np
@@ -17,9 +17,14 @@ from sklearn.metrics import f1_score
 from torch.utils.data import DataLoader, TensorDataset
 
 from experiments.config import Config
-from ml.data_loader import FEATURE_NAMES, chronological_split, load_cic_windows, load_unsw_windows
+from ml.data_loader import (
+    FEATURE_NAMES,
+    chronological_split,
+    load_cic_windows,
+    load_unsw_windows,
+)
 from ml.model import StressGRU
-from ml.preprocessing import STRESS_LABELS, fit_scaler, fit_stress_map, make_sequences, stress_composite
+from ml.preprocessing import STRESS_LABELS, fit_scaler, fit_stress_map, make_sequences
 from ml.synthetic import synthetic_windows
 
 
@@ -27,34 +32,22 @@ def _slice(arr, lo, hi):
     return arr[lo:hi]
 
 
-def _attack_target(feats: np.ndarray, metas: list, splits: dict) -> np.ndarray:
-    """Thematic 2-class target.
-
-    attack_flag (feature index 9) is 1.0 when *any* flow in the window is an
-    attack, i.e. it is the per-window ground truth from the raw Label column.
-    We threshold it at 0.5 so windows with at least one attack flow are Attack=1.
-    [ASSUMPTION]
-    """
-    y = feats[:, 9].copy()
-    y = (y >= 0.5).astype(np.int64)
-    train_hi = splits["train"][1]
-    # If for some reason the loader forgot the flag, fall back to the raw-label
-    # heuristic only on the training rows so the model still sees a real signal.
-    if y.sum() == 0:
-        s = stress_composite(feats)
-        y = (s >= float(np.median(s[:train_hi]))).astype(np.int64)
-    return y
-
-
 def prepare_bundle(cfg: Config):
     if cfg.dataset == "unsw":
-        feats, dem, metas, bounds = load_unsw_windows(cfg)
+        feats, dem, labels, metas, bounds = load_unsw_windows(cfg)
     elif cfg.dataset == "synthetic":
-        # [SIM] generator instead of files; bounds are None → generic split
-        feats, dem, metas = synthetic_windows(cfg, seed=cfg.seed + 5_000)
+        feats, dem, labels, metas = synthetic_windows(cfg, seed=cfg.seed + 5_000)
         bounds = None
     else:
-        feats, dem, metas, bounds = load_cic_windows(cfg)
+        feats, dem, labels, metas, bounds = load_cic_windows(cfg)
+
+    if labels.shape[0] != feats.shape[0]:
+        raise RuntimeError("labels and features are misaligned; loader bug")
+    if feats.shape[1] != len(FEATURE_NAMES):
+        raise RuntimeError(
+            f"feature matrix has {feats.shape[1]} columns but FEATURE_NAMES has "
+            f"{len(FEATURE_NAMES)}: the target may have leaked into the inputs"
+        )
 
     splits = chronological_split(len(feats), bounds)
     tr = _slice(feats, *splits["train"])
@@ -62,36 +55,33 @@ def prepare_bundle(cfg: Config):
         raise RuntimeError("Not enough training windows. Check dataset paths / flows_per_window.")
 
     scaler = fit_scaler(tr)
-    y_all = _attack_target(feats, metas, splits)
-    Y_all = y_all.copy()
-
     scaled = scaler.transform(feats).astype(np.float32)
 
     def seq_for(part):
         lo, hi = splits[part]
-        # sequences must not cross into other parts: build from that slice only
-        X, y, idx = make_sequences(scaled[lo:hi], Y_all[lo:hi], cfg.window_length_L)
+        # sequences never cross into other parts: build from that slice only
+        X, y, idx = make_sequences(
+            scaled[lo:hi], labels[lo:hi], cfg.window_length_L, cfg.ml_horizon
+        )
         return X, y, idx + lo
 
     bundle = {
         "feats": feats,
         "scaled": scaled,
         "demand": dem,
-        "y": Y_all,
+        "labels": labels,
+        "y": labels,
         "splits": splits,
         "bounds": bounds,
         "scaler": scaler,
-        "stress_map": fit_stress_map(tr, tr),
+        "stress_map": fit_stress_map(tr, labels[: len(tr)]),
         "seq": {p: seq_for(p) for p in ("train", "val", "test", "sim")},
         "feature_names": FEATURE_NAMES,
         "metas": metas,
+        "horizon": cfg.ml_horizon,
+        "leakage_free": True,
     }
     return bundle
-
-
-def fit_stress_map(train_feat: np.ndarray, train_y: np.ndarray) -> None:
-    """placeholder kept to avoid import churn; labels come from attack_flag."""
-    return None
 
 
 def train_model(cfg: Config, bundle=None) -> dict:
@@ -104,17 +94,22 @@ def train_model(cfg: Config, bundle=None) -> dict:
     device = torch.device("cpu")
     n_feat = Xtr.shape[-1]
 
-    # The CIC 2-class problem is easy to underfit: use a smaller, deeper-enough
-    # GRU with more epochs and less dropout so it can actually separate classes.
-    layers = 1
-    hidden = 64
-    dropout = 0.0
+    hidden = int(getattr(cfg, "gru_hidden", 64))
+    layers = int(getattr(cfg, "gru_layers", 2))
+    dropout = float(getattr(cfg, "dropout", 0.2)) if layers > 1 else 0.0
     epochs = int(getattr(cfg, "epochs", 15))
     lr = float(getattr(cfg, "learning_rate", 1e-3))
 
     model = StressGRU(n_feat, hidden, layers, dropout, n_classes=len(STRESS_LABELS)).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_fn = torch.nn.CrossEntropyLoss()
+    counts = np.bincount(ytr, minlength=len(STRESS_LABELS)).astype(float)
+    if getattr(cfg, "use_class_weights", True) and (counts > 0).all():
+        weights = counts.sum() / (len(counts) * counts)
+        loss_fn = torch.nn.CrossEntropyLoss(
+            weight=torch.tensor(weights, dtype=torch.float32)
+        )
+    else:
+        loss_fn = torch.nn.CrossEntropyLoss()
 
     def loader(X, y, shuffle):
         ds = TensorDataset(torch.from_numpy(X), torch.from_numpy(y))
@@ -135,6 +130,7 @@ def train_model(cfg: Config, bundle=None) -> dict:
             logits = model(xb)
             loss = loss_fn(logits, yb)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             total += float(loss.item()) * len(xb)
             n += len(xb)
@@ -168,8 +164,10 @@ def train_model(cfg: Config, bundle=None) -> dict:
             "dropout": dropout,
             "n_classes": len(STRESS_LABELS),
             "L": cfg.window_length_L,
+            "horizon": cfg.ml_horizon,
             "feature_names": FEATURE_NAMES,
             "dataset": cfg.dataset,
+            "leakage_free": True,
         },
         cfg.model_path(),
     )
@@ -184,6 +182,9 @@ def train_model(cfg: Config, bundle=None) -> dict:
     meta = {
         "best_val_macro_f1": best_f1,
         "history": history,
+        "horizon": cfg.ml_horizon,
+        "leakage_free": True,
+        "feature_names": FEATURE_NAMES,
         "splits": {k: list(v) for k, v in bundle["splits"].items()},
         "n_windows": int(len(bundle["feats"])),
         "class_counts_train": np.bincount(ytr, minlength=2).tolist(),

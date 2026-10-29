@@ -1,4 +1,4 @@
-"""Run simulations and experiments.
+﻿"""Run simulations and experiments.
 
 `run_simulation` runs one seed/policy. `run_experiment` runs P-LENS and all
 baselines over multiple seeds with common random numbers (same seed ⇒ same
@@ -18,6 +18,7 @@ from scipy.stats import wilcoxon
 
 from experiments.config import Config
 from experiments.seeds import demo_seeds
+from experiments.stats import holm_family, paired_tests
 from network.graph import EvolvingNetwork
 from network.metrics import snapshot
 from plens.controller import PLENSController
@@ -36,11 +37,14 @@ def run_simulation(
     ctl = PLENSController(cfg, net, ml_predictor=predictor, base_rng=base_rng)
     T = min(cfg.simulation_steps, len(demand_series))
     L = cfg.window_length_L
+    from experiments.traffic import intensity_series
+
+    intensities = intensity_series(cfg, T)
     for t in range(T):
         hist = None
         if scaled_feat is not None and t >= L:
             hist = scaled_feat[t - L : t]
-        ctl.step(t, demand_series[t], hist)
+        ctl.step(t, demand_series[t], hist, float(intensities[t]))
     out = {
         "seed": cfg.seed,
         "policy": cfg.policy,
@@ -65,14 +69,22 @@ def summarize(run: dict) -> dict:
 
     n_steps = max(len(h), 1)
     n_mut_steps = sum(1 for x in h if x["mutations"])
+    n_success = int(sum(x.get("n_success", 0) for x in h))
+    n_fail = int(sum(x.get("n_fail", 0) for x in h))
+    evaluated = n_success + n_fail
     return {
         "seed": run["seed"],
         "policy": run["policy"],
         "ablation": run.get("ablation", "none"),
         "latency_mean": mean("latency"),
+        "latency_p95_mean": mean("latency_p95"),
+        "latency_p99_mean": mean("latency_p99"),
         "throughput_mean": mean("throughput"),
         "loss_mean": mean("loss"),
         "congestion_mean": mean("congestion"),
+        "sla_violation_mean": mean("sla_violation"),
+        "sla_latency_violation_mean": mean("sla_latency_violation"),
+        "sla_loss_violation_mean": mean("sla_loss_violation"),
         "connected_frac": mean("connected"),
         "avg_path_length_mean": mean("avg_path_length"),
         "mutations": int(sum(len(x["mutations"]) for x in h)),
@@ -80,10 +92,21 @@ def summarize(run: dict) -> dict:
         "prune": int(sum(x["n_prune"] for x in h)),
         "rewire": int(sum(x["n_rewire"] for x in h)),
         "mutation_rate": float(n_mut_steps / n_steps),
+        "n_success": n_success,
+        "n_fail": n_fail,
+        "success_rate": float(n_success / evaluated) if evaluated else 0.0,
         "pp_mean": float(np.mean([x["pp_mean"] for x in h])),
         "pd_mean": float(np.mean([x["pd_mean"] for x in h])),
+        "debt_persistence_mean": float(np.mean([x.get("debt_persistence_mean", 0.0) for x in h])),
+        "criticality_mean": float(np.mean([x.get("criticality_mean", 0.0) for x in h])),
         "budget_mean": float(np.mean([x["budget"] for x in h])),
+        "budget_spent_mean": float(np.mean([x.get("budget_spent", 0.0) for x in h])),
+        "overload_mean": float(np.mean([x.get("overload", 0.0) for x in h])),
+        "eval_uncertainty_mean": float(np.mean([x.get("eval_uncertainty", 0.0) for x in h])),
         "mc_mean": float(np.mean([x["mc_mean"] for x in h])),
+        "control_ms_mean": 1000.0 * float(np.mean([x.get("control_seconds", 0.0) for x in h])),
+        "eval_ms_mean": 1000.0 * float(np.mean([x.get("eval_seconds", 0.0) for x in h])),
+        "step_ms_mean": 1000.0 * float(np.mean([x.get("step_seconds", 0.0) for x in h])),
     }
 
 
@@ -145,34 +168,43 @@ def run_experiment(
             sd = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
             ci = 1.96 * sd / np.sqrt(max(len(vals), 1))
             agg[p][key] = {"mean": mu, "ci95": float(ci), "values": vals.tolist()}
-    # paired Wilcoxon signed-rank vs P-LENS on per-seed means [ASSUMPTION §10]
-    tests = {}
+    # Paired tests with Holm correction and effect sizes vs P-LENS [§10]
+    tests: dict = {}
     plens_rows = per_policy.get("plens", [])
+    metric_keys = [k for k in per_policy[policies[0]][0] if k not in ("seed", "policy", "ablation")]
     for p in policies:
         if p == "plens":
             continue
         tests[p] = {}
-        for key in ("latency_mean", "throughput_mean", "loss_mean", "congestion_mean"):
+        for key in metric_keys:
             a = np.array([r[key] for r in plens_rows], dtype=float)
             b = np.array([r[key] for r in per_policy[p]], dtype=float)
-            d = a - b
-            if np.allclose(d, 0.0):
-                tests[p][key] = {"stat": None, "p": 1.0, "note": "no differences"}
+            if np.allclose(a, b):
+                tests[p][key] = {
+                    "metric": key,
+                    "n": len(a),
+                    "mean_diff": 0.0,
+                    "ttest_p": 1.0,
+                    "wilcoxon_p": 1.0,
+                    "note": "no differences",
+                }
                 continue
-            try:
-                stat, pv = wilcoxon(a, b)
-                tests[p][key] = {"stat": float(stat), "p": float(pv)}
-            except Exception as e:  # tiny samples etc.
-                tests[p][key] = {"stat": None, "p": None, "note": str(e)}
+            tests[p][key] = paired_tests(a, b, key)
+        holm = holm_family(tests[p], key="wilcoxon_p")
+        for key, adj in holm.items():
+            tests[p][key]["p_holm"] = adj
+            tests[p][key]["significant_holm"] = bool(adj < 0.05)
     result = {
         "config": {k: (str(v) if isinstance(v, Path) else v) for k, v in cfg.__dict__.items()},
         "seeds": list(seeds),
         "per_seed": per_policy,
         "aggregate": agg,
         "wilcoxon_vs_plens": tests,
+        "statistics_vs_plens": tests,
     }
     if return_runs:
         result["runs"] = raw_runs
     with open(out_dir / "experiment_summary.json", "w") as f:
         json.dump(result, f, indent=2, default=str)
     return result
+

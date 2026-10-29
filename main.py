@@ -41,7 +41,7 @@ def build_demand_series(cfg: Config, bundle) -> tuple[np.ndarray, np.ndarray | N
     if cfg.dataset == "synthetic" or bundle is None:
         from ml.synthetic import synthetic_windows
 
-        feats, dem, _ = synthetic_windows(cfg, n_windows=steps, seed=cfg.seed + 5_000)
+        feats, dem, labels, _ = synthetic_windows(cfg, n_windows=steps, seed=cfg.seed + 5_000)
         return dem, None
     lo, hi = bundle["splits"]["sim"]
     dem_all = bundle["demand"][lo:hi]
@@ -108,7 +108,9 @@ def main() -> None:
         out = train_model(cfg)
         # wrap the in-memory model in the predictor interface the controller
         # expects (predict_stress on scaled (L, F) windows) [ML]
-        predictor = TrainedPredictor(out["model"], out["bundle"]["scaler"], cfg.window_length_L)
+        predictor = TrainedPredictor(
+            out["model"], out["bundle"]["scaler"], cfg.window_length_L, cfg.ml_horizon
+        )
         bundle = out["bundle"]
 
     # --- ML evaluation: test-set accuracy -> results/ml_metrics.json [ML] ---
@@ -162,3 +164,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
