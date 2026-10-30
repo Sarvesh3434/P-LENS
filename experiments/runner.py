@@ -114,6 +114,27 @@ def _policy_run(cfg: Config, demand, scaled_feat, predictor):
     return run_simulation(cfg, demand, scaled_feat, predictor)
 
 
+def _run_one(payload: dict) -> tuple:
+    """Worker for the process pool: one (seed, policy) run.
+
+    Runs are deterministic in ``cfg.seed`` (common random numbers), so the
+    scheduling of workers cannot change any result — only the wall-clock time.
+    """
+    run_cfg = Config(**{**payload["cfg"], "seed": payload["seed"], "policy": payload["policy"]})
+    run = run_simulation(
+        run_cfg,
+        payload["demand"],
+        payload["scaled_feat"],
+        payload["predictor"],
+        collect_topology=payload["collect_topology"],
+    )
+    s = summarize(run)
+    if payload["save_runs"]:
+        with open(Path(payload["out_dir"]) / f"run_{payload['policy']}_seed{payload['seed']}.json", "w") as f:
+            json.dump(run, f)
+    return s, (run if payload["return_run"] else None)
+
+
 def run_experiment(
     cfg: Config,
     demand_series: np.ndarray,
@@ -125,6 +146,8 @@ def run_experiment(
     save_runs: bool = True,
     verbose: bool = True,
     return_runs: bool = False,
+    n_jobs: int = 1,
+    collect_topology: bool = True,
 ) -> dict:
     """Run all policies × seeds. Same seed = same traffic/failure draws [CRN].
 
@@ -137,25 +160,47 @@ def run_experiment(
     out_dir.mkdir(parents=True, exist_ok=True)
     per_policy = {p: [] for p in policies}
     raw_runs: dict = {p: [] for p in policies}
-    for seed in seeds:
-        for policy in policies:
-            run_cfg = Config(**{**cfg.__dict__, "seed": seed, "policy": policy})
-            t0 = time.time()
-            run = _policy_run(run_cfg, demand_series, scaled_feat, predictor)
-            dt = time.time() - t0
-            s = summarize(run)
-            per_policy[policy].append(s)
-            if return_runs:
-                raw_runs[policy].append(run)
-            if save_runs:
-                with open(out_dir / f"run_{policy}_seed{seed}.json", "w") as f:
-                    json.dump(run, f)
-            if verbose:
-                print(
-                    f"  seed={seed} policy={policy:7s} "
-                    f"lat={s['latency_mean']:.5f} loss={s['loss_mean']:.4f} "
-                    f"thr={s['throughput_mean']:.4f} mut={s['mutations']:4d} ({dt:.1f}s)"
-                )
+
+    # Plan every (seed, policy) run, then execute them in a process pool when
+    # n_jobs > 1.  Results are identical either way (CRN + seeded RNG).
+    plan = [
+        {
+            "cfg": cfg.__dict__,
+            "demand": demand_series,
+            "scaled_feat": scaled_feat,
+            "predictor": predictor,
+            "policy": policy,
+            "seed": seed,
+            "out_dir": str(out_dir),
+            "save_runs": save_runs,
+            "return_run": return_runs,
+            "collect_topology": collect_topology,
+        }
+        for seed in seeds
+        for policy in policies
+    ]
+
+    t_start = time.time()
+    if n_jobs > 1 and len(plan) > 1:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(max_workers=int(n_jobs)) as pool:
+            outcomes = list(pool.map(_run_one, plan, chunksize=1))
+    else:
+        outcomes = [_run_one(p) for p in plan]
+
+    for payload, (s, run) in zip(plan, outcomes):
+        per_policy[payload["policy"]].append(s)
+        if return_runs:
+            raw_runs[payload["policy"]].append(run)
+        if verbose:
+            print(
+                f"  seed={payload['seed']} policy={payload['policy']:15s} "
+                f"lat={s['latency_mean']:.5f} loss={s['loss_mean']:.4f} "
+                f"thr={s['throughput_mean']:.4f} mut={s['mutations']:4d}"
+            )
+    if verbose:
+        print(f"  {len(plan)} runs in {time.time() - t_start:.1f}s (n_jobs={n_jobs})")
     # aggregate stats
     agg = {}
     for p, rows in per_policy.items():

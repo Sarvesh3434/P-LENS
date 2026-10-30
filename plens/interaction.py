@@ -57,29 +57,36 @@ def interaction(a: dict, b: dict, net: EvolvingNetwork, cfg: Config) -> float:
     if add_a & rem_b or add_b & rem_a or add_a & add_b or rem_a & rem_b:
         return -1.0
 
-    headroom_a = min(cfg.max_degree - net.degree(i) for i in nodes_a)
-    headroom_b = min(cfg.max_degree - net.degree(i) for i in nodes_b)
-    degree_a = min(net.degree(i) for i in nodes_a)
-    degree_b = min(net.degree(i) for i in nodes_b)
+    if shared:
+        # Degrees are only needed to arbitrate operations that touch a common
+        # node; computing them for disjoint pairs dominated the profile.
+        headroom_a = min(cfg.max_degree - net.degree(i) for i in nodes_a)
+        headroom_b = min(cfg.max_degree - net.degree(i) for i in nodes_b)
+        degree_a = min(net.degree(i) for i in nodes_a)
+        degree_b = min(net.degree(i) for i in nodes_b)
 
-    # Both consume the last slot of a shared endpoint.
-    if shared and a["op"] == "ADD" and b["op"] == "ADD":
-        if min(headroom_a, headroom_b) <= 1:
-            return -1.0
-        return -0.3
+        # Both consume the last slot of a shared endpoint.
+        if a["op"] == "ADD" and b["op"] == "ADD":
+            if min(headroom_a, headroom_b) <= 1:
+                return -1.0
+            return -0.3
 
-    # Pruning two edges incident to the same fragile node.
-    if shared and a["op"] == "PRUNE" and b["op"] == "PRUNE":
-        if min(degree_a, degree_b) <= cfg.min_degree + 1:
-            return -0.7
-        return -0.2
+        # Pruning two edges incident to the same fragile node.
+        if a["op"] == "PRUNE" and b["op"] == "PRUNE":
+            if min(degree_a, degree_b) <= cfg.min_degree + 1:
+                return -0.7
+            return -0.2
 
-    # ADD + PRUNE at the same node frees/consumes a degree slot: synergistic.
-    if shared and {a["op"], b["op"]} == {"ADD", "PRUNE"}:
-        return 0.6
+        # ADD + PRUNE at the same node frees/consumes a degree slot: synergistic.
+        if {a["op"], b["op"]} == {"ADD", "PRUNE"}:
+            return 0.6
 
+        # Any other pair sharing a node reinforces each other modestly.
+        return 0.15
+
+    # Disjoint pairs below.
     # Disjoint ADDs under congestion diversify the path set.
-    if a["op"] == "ADD" and b["op"] == "ADD" and not shared:
+    if a["op"] == "ADD" and b["op"] == "ADD":
         cong = 0.5 * (
             net.nodes[int(a["i"])].utilization + net.nodes[int(a["j"])].utilization
             + net.nodes[int(b["i"])].utilization + net.nodes[int(b["j"])].utilization
@@ -87,13 +94,11 @@ def interaction(a: dict, b: dict, net: EvolvingNetwork, cfg: Config) -> float:
         return float(min(0.7, 0.2 + 0.5 * cong))
 
     # REWIRE + disjoint ADD: new alternate route.
-    if {a["op"], b["op"]} == {"REWIRE", "ADD"} and not shared:
+    if {a["op"], b["op"]} == {"REWIRE", "ADD"}:
         return 0.3
 
     # Neighbouring operations can reinforce each other modestly.
-    if shared or any(
-        j in net.neighbours(i) for i in nodes_a for j in nodes_b if i != j
-    ):
+    if any(j in net.neighbours(i) for i in nodes_a for j in nodes_b if i != j):
         return 0.15
     return 0.0
 

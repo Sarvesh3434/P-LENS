@@ -25,13 +25,9 @@ def _demand_for(cfg: Config, bundle) -> tuple[np.ndarray, np.ndarray | None]:
 
         _, dem, _, _ = synthetic_windows(cfg, n_windows=steps, seed=cfg.seed + 5_000)
         return dem, None
-    lo, hi = bundle["splits"]["sim"]
-    dem_all = bundle["demand"][lo:hi]
-    scaled = bundle["scaled"][lo : lo + len(dem_all)]
-    reps = int(np.ceil(steps / max(len(dem_all), 1)))
-    dem = np.concatenate([dem_all] * max(reps, 1), axis=0)[:steps]
-    scaled_feat = np.concatenate([scaled] * max(reps, 1), axis=0)[:steps]
-    return dem, scaled_feat
+    from experiments.traffic import replay_series
+
+    return replay_series(bundle, steps)
 
 
 def run_study(
@@ -47,6 +43,7 @@ def run_study(
     out_dir: str | Path | None = None,
     save_runs: bool = False,
     verbose: bool = True,
+    n_jobs: int = 1,
 ) -> dict:
     out = Path(out_dir) if out_dir else base_cfg.artifacts_dir() / "study"
     out.mkdir(parents=True, exist_ok=True)
@@ -81,6 +78,7 @@ def run_study(
                         out_dir=cell_dir,
                         save_runs=save_runs,
                         verbose=verbose,
+                        n_jobs=n_jobs,
                     )
                     summary["cells"][key] = {
                         "config": {

@@ -107,7 +107,9 @@ def replay_branch(
 
     ``logs[s]`` must contain ``rng_state`` (before failures), ``demand`` (the
     scaled matrix used by the real step), and ``mutations`` (candidate dicts
-    with a ``token``).  ``logs`` is indexed relative to the replay start.
+    with a ``token``).  ``logs`` is indexed relative to the replay start.  A
+    single-pass router is used: both branches share it, so the comparison stays
+    matched and the expensive exploratory pass is not paid twice per step.
     """
     branch = copy.deepcopy(snapshot)
     trajectory = []
@@ -118,7 +120,7 @@ def replay_branch(
         apply_failures(branch)
         d = entry["demand"] if demand_override is None else demand_override[s]
         branch.set_demand(np.asarray(d, dtype=float))
-        route_and_load(branch)
+        route_and_load(branch, two_pass=False)
         trajectory.append(dict(branch.last_metrics))
         for item in entry.get("mutations", []):
             if exclude_token is not None and item.get("token") == exclude_token:
@@ -135,8 +137,12 @@ def evaluate_replay(
     token: int,
     cfg,
     n_mutations: int = 1,
+    factual_traj: Sequence[dict] | None = None,
 ) -> Dict[str, float]:
-    real_traj = replay_branch(snapshot, logs[:horizon], horizon, None, cfg)
+    if factual_traj is None:
+        real_traj = replay_branch(snapshot, logs[:horizon], horizon, None, cfg)
+    else:
+        real_traj = list(factual_traj)
     shadow_traj = replay_branch(snapshot, logs[:horizon], horizon, token, cfg)
     ev = delayed_gain(real_traj[-1], shadow_traj[-1], cfg, n_mutations)
 

@@ -34,6 +34,7 @@ def main() -> None:
     ap.add_argument("--out", default=None)
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--save-runs", action="store_true")
+    ap.add_argument("--jobs", type=int, default=1, help="parallel worker processes")
     args = ap.parse_args()
 
     if args.quick:
@@ -60,7 +61,11 @@ def main() -> None:
         out = train_model(cfg)
         bundle = out["bundle"]
         predictor = TrainedPredictor(
-            out["model"], bundle["scaler"], cfg.window_length_L, cfg.ml_horizon
+            out["model"],
+            out["bundle"]["scaler"],
+            cfg.window_length_L,
+            cfg.ml_horizon,
+            threshold=out.get("threshold", 0.5),
         )
 
     t0 = time.time()
@@ -75,6 +80,7 @@ def main() -> None:
         seeds=list(range(7, 7 + args.seeds)),
         out_dir=Path(args.out) if args.out else None,
         save_runs=args.save_runs,
+        n_jobs=args.jobs,
     )
     print(f"[study] {len(summary['cells'])} cells in {time.time() - t0:.1f}s")
 

@@ -42,10 +42,17 @@ def test_drift_positive_after_mutation(net, cfg, demand):
     assert ind["D"][0] > 0.0 and ind["D"][5] > 0.0
 
 
-def test_congestion_increases_with_load(net, cfg, demand):
-    light = compute_indicators(_loaded_net(net, cfg, demand * 0.1), net.demand)["C"]
-    net2_demand = demand * 5.0
-    heavy = compute_indicators(_loaded_net(net, cfg, net2_demand), net.demand)["C"]
+def test_congestion_increases_with_load(cfg, demand):
+    from network.graph import EvolvingNetwork
+
+    def load(target):
+        n = EvolvingNetwork(cfg, np.random.default_rng(cfg.seed))
+        n.set_demand(scale_demand(demand, n, target))
+        route_and_load(n)
+        return compute_indicators(n, n.demand)["C"]
+
+    light = load(0.15)
+    heavy = load(0.90)
     assert float(np.mean(heavy)) >= float(np.mean(light)) - 1e-9
 
 

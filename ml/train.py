@@ -20,6 +20,7 @@ from experiments.config import Config
 from ml.data_loader import (
     FEATURE_NAMES,
     chronological_split,
+    day_blocked_blocks,
     load_cic_windows,
     load_unsw_windows,
 )
@@ -50,7 +51,9 @@ def prepare_bundle(cfg: Config):
         )
 
     splits = chronological_split(len(feats), bounds)
-    tr = _slice(feats, *splits["train"])
+    split_blocks = day_blocked_blocks(len(feats), bounds)
+    tr_parts = [feats[a:b] for a, b in split_blocks["train"]]
+    tr = np.concatenate(tr_parts, axis=0)
     if len(tr) < 10:
         raise RuntimeError("Not enough training windows. Check dataset paths / flows_per_window.")
 
@@ -58,12 +61,24 @@ def prepare_bundle(cfg: Config):
     scaled = scaler.transform(feats).astype(np.float32)
 
     def seq_for(part):
-        lo, hi = splits[part]
-        # sequences never cross into other parts: build from that slice only
-        X, y, idx = make_sequences(
-            scaled[lo:hi], labels[lo:hi], cfg.window_length_L, cfg.ml_horizon
-        )
-        return X, y, idx + lo
+        xs, ys, idx = [], [], []
+        for lo, hi in split_blocks[part]:
+            # sequences never cross a block boundary, so no future window from
+            # another day can enter the input history
+            X, y, i = make_sequences(
+                scaled[lo:hi], labels[lo:hi], cfg.window_length_L, cfg.ml_horizon
+            )
+            if len(X):
+                xs.append(X)
+                ys.append(y)
+                idx.append(i + lo)
+        if not xs:
+            return (
+                np.zeros((0, cfg.window_length_L, feats.shape[1])),
+                np.zeros((0,), dtype=np.int64),
+                np.zeros((0,), dtype=np.int64),
+            )
+        return np.concatenate(xs), np.concatenate(ys), np.concatenate(idx)
 
     bundle = {
         "feats": feats,
@@ -72,7 +87,8 @@ def prepare_bundle(cfg: Config):
         "labels": labels,
         "y": labels,
         "splits": splits,
-        "bounds": bounds,
+        "split_blocks": split_blocks,
+        "split_protocol": "day-blocked chronological (65/15/15/5 per source block)",
         "scaler": scaler,
         "stress_map": fit_stress_map(tr, labels[: len(tr)]),
         "seq": {p: seq_for(p) for p in ("train", "val", "test", "sim")},
@@ -116,10 +132,12 @@ def train_model(cfg: Config, bundle=None) -> dict:
         return DataLoader(ds, batch_size=cfg.batch_size, shuffle=shuffle)
 
     tr_loader = loader(Xtr, ytr, True)
-    history = {"train_loss": [], "val_f1": []}
+    history = {"train_loss": [], "val_f1": [], "val_threshold": []}
     best_f1 = -1.0
     best_state = None
+    best_threshold = 0.5
     patience = 0
+    grid = np.linspace(0.05, 0.95, 91)
     for epoch in range(epochs):
         model.train()
         total = 0.0
@@ -136,15 +154,24 @@ def train_model(cfg: Config, bundle=None) -> dict:
             n += len(xb)
         model.eval()
         with torch.no_grad():
-            logits = model(torch.from_numpy(Xva).to(device))
-            pred = logits.argmax(1).cpu().numpy()
-        f1 = f1_score(yva, pred, average="macro", zero_division=0)
+            prob = torch.softmax(model(torch.from_numpy(Xva).to(device)), 1)[:, 1].cpu().numpy()
+        # Early stopping uses the *thresholded* validation macro-F1, the same
+        # criterion reported on test; argmax alone is biased by class weights.
+        th_scores = [f1_score(yva, (prob >= t).astype(int), average="macro", zero_division=0) for t in grid]
+        k = int(np.argmax(th_scores))
+        f1 = float(th_scores[k])
+        thr = float(grid[k])
         history["train_loss"].append(total / max(n, 1))
-        history["val_f1"].append(float(f1))
-        print(f"epoch {epoch+1}/{epochs} loss={history['train_loss'][-1]:.4f} val_macro_f1={f1:.4f}")
+        history["val_f1"].append(f1)
+        history["val_threshold"].append(thr)
+        print(
+            f"epoch {epoch+1}/{epochs} loss={history['train_loss'][-1]:.4f} "
+            f"val_macro_f1={f1:.4f} (thr={thr:.2f})"
+        )
         if f1 > best_f1:
             best_f1 = f1
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            best_threshold = thr
             patience = 0
         else:
             patience += 1
@@ -153,6 +180,9 @@ def train_model(cfg: Config, bundle=None) -> dict:
                 break
     if best_state is not None:
         model.load_state_dict(best_state)
+
+    decision_threshold = float(best_threshold)
+    print(f"decision threshold (val macro-F1) = {decision_threshold:.2f}")
 
     cfg.model_path().parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -167,6 +197,7 @@ def train_model(cfg: Config, bundle=None) -> dict:
             "horizon": cfg.ml_horizon,
             "feature_names": FEATURE_NAMES,
             "dataset": cfg.dataset,
+            "decision_threshold": decision_threshold,
             "leakage_free": True,
         },
         cfg.model_path(),
@@ -181,15 +212,18 @@ def train_model(cfg: Config, bundle=None) -> dict:
     )
     meta = {
         "best_val_macro_f1": best_f1,
+        "decision_threshold": decision_threshold,
         "history": history,
         "horizon": cfg.ml_horizon,
         "leakage_free": True,
         "feature_names": FEATURE_NAMES,
+        "split_protocol": bundle["split_protocol"],
         "splits": {k: list(v) for k, v in bundle["splits"].items()},
+        "split_blocks": {k: [list(b) for b in v] for k, v in bundle["split_blocks"].items()},
         "n_windows": int(len(bundle["feats"])),
         "class_counts_train": np.bincount(ytr, minlength=2).tolist(),
         "class_counts_val": np.bincount(yva, minlength=2).tolist(),
         "class_counts_test": np.bincount(bundle["seq"]["test"][1], minlength=2).tolist(),
     }
     (cfg.artifacts_dir() / "train_meta.json").write_text(json.dumps(meta, indent=2))
-    return {"model": model, "bundle": bundle, "meta": meta}
+    return {"model": model, "bundle": bundle, "meta": meta, "threshold": decision_threshold}

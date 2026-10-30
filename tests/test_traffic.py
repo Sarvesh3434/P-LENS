@@ -42,7 +42,9 @@ def test_scale_demand_hits_target_utilization(net, cfg, demand):
         for e in net.edges.values()
         if not e.failed and not net.nodes[e.u].failed and not net.nodes[e.v].failed
     )
-    assert np.isclose(scaled.sum(), target * usable_bw, rtol=1e-6)
+    # total offered load is divided by the mean hop count so that the *edge*
+    # load (not the sum over multi-hop paths) hits the target
+    assert np.isclose(scaled.sum(), target * usable_bw / net.ref_mean_hops, rtol=1e-6)
 
 
 def test_scale_demand_ignores_failed_bandwidth(net, cfg, demand):

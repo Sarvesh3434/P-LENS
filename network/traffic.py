@@ -35,6 +35,8 @@ from typing import Dict, List, Tuple
 
 import networkx as nx
 import numpy as np
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import dijkstra as sp_dijkstra
 
 from network.graph import EvolvingNetwork, canon
 
@@ -52,6 +54,55 @@ def _weighted_graph(net: EvolvingNetwork) -> nx.Graph:
     return g
 
 
+def _all_sources_paths(g: nx.Graph) -> Dict[int, list]:
+    """Shortest-path trees from every source, in two sparse calls.
+
+    The first call uses congestion-aware latency weights for routing.  The
+    second uses unit weights and returns the hop distance, which ``scale_demand``
+    needs to convert a per-edge utilization target into a total offered load
+    (a demand unit traverses several edges, so ignoring path length inflates
+    every edge by the mean hop count).
+    """
+    nodes = list(g.nodes())
+    if not nodes:
+        return {}, {}, {}, {}, None
+    idx = {v: k for k, v in enumerate(nodes)}
+    rows, cols, data = [], [], []
+    for a, b, d in g.edges(data=True):
+        w = float(d.get("weight", 1.0))
+        rows.extend((idx[a], idx[b]))
+        cols.extend((idx[b], idx[a]))
+        data.extend((w, w))
+    m = len(nodes)
+    mat = csr_matrix((data, (rows, cols)), shape=(m, m))
+    dist, pred = sp_dijkstra(mat, directed=False, return_predecessors=True)
+    hop_dist = sp_dijkstra(mat, directed=False, unweighted=True)
+    return nodes, idx, dist, pred, hop_dist
+
+
+def _path_from_pred(nodes, idx, pred, src: int, dst: int):
+    if src == dst:
+        return [src]
+    s, k = idx[src], idx[dst]
+    if s >= pred.shape[0] or k >= pred.shape[1] or pred[s, k] < 0:
+        return None
+    rev = [k]
+    while k != s:
+        k = int(pred[s, k])
+        if k < 0:
+            return None
+        rev.append(k)
+    return [nodes[x] for x in reversed(rev)]
+
+
+def _mean_path_length(dist: np.ndarray) -> float:
+    """Mean finite pairwise distance from the routing matrix (cheap APL)."""
+    finite = np.isfinite(dist) & (dist > 0.0)
+    if not finite.any():
+        return float("nan")
+    return float(dist[finite].mean())
+
+
 def _stage_one(net: EvolvingNetwork) -> None:
     """First routing pass: place demand, keep only the utilization signal."""
     for e in net.edges.values():
@@ -60,16 +111,19 @@ def _stage_one(net: EvolvingNetwork) -> None:
     g = _weighted_graph(net)
     demand = net.demand
     n = net.n
+    nodes, idx, _dist, pred, _hop = _all_sources_paths(g)
     for i in range(n):
-        if i not in g:
+        if i not in idx:
             continue
         for j in range(n):
             vol = float(demand[i, j])
             if vol <= 0 or i == j:
                 continue
-            if j not in g or not nx.has_path(g, i, j):
+            if j not in idx or i not in idx:
                 continue
-            path = nx.shortest_path(g, i, j, weight="weight")
+            path = _path_from_pred(nodes, idx, pred, i, j)
+            if path is None:
+                continue
             for a, b in zip(path, path[1:]):
                 e = net.edges.get(canon(a, b))
                 if e is not None:
@@ -80,8 +134,15 @@ def _stage_one(net: EvolvingNetwork) -> None:
             e.utilization = min(4.0, e.load / max(e.bandwidth, 1.0))
 
 
-def route_and_load(net: EvolvingNetwork) -> Dict[str, float]:
-    """Place demand on congestion-aware shortest paths; update queues and metrics."""
+def route_and_load(net: EvolvingNetwork, two_pass: bool = True) -> Dict[str, float]:
+    """Place demand on congestion-aware shortest paths; update queues and metrics.
+
+    ``two_pass=False`` skips the exploratory first pass and routes directly with
+    the utilization state carried by ``net``.  It is used by counterfactual
+    replays, where the factual and counterfactual branches are treated
+    identically; one pass per branch keeps the estimator matched while roughly
+    halving its cost.  Online control still uses the full two-pass router.
+    """
     prev_util = {k: e.utilization for k, e in net.edges.items()}
     for e in net.edges.values():
         e.load = 0.0
@@ -101,9 +162,10 @@ def route_and_load(net: EvolvingNetwork) -> Dict[str, float]:
         if k in net.edges:
             net.edges[k].utilization = u
 
-    _stage_one(net)  # [ASSUMPTION] two passes: pass 1 fills u_e_prev for pass 2
+    if two_pass:
+        _stage_one(net)  # [ASSUMPTION] two passes: pass 1 fills u_e_prev for pass 2
 
-    g = _weighted_graph(net)  # now weighted with pass-1 utilization
+    g = _weighted_graph(net)  # weighted with (pass-1 or carried) utilization
     for e in net.edges.values():
         e.load = 0.0  # discard pass-1 loads; only their utilization signal is kept
 
@@ -119,6 +181,9 @@ def route_and_load(net: EvolvingNetwork) -> Dict[str, float]:
     n = net.n
 
     # --- pass 2: final placement, collecting per-flow paths ---
+    nodes, idx, dist, pred, hop_dist = _all_sources_paths(g)
+    if hop_dist is not None:
+        net.mean_hops = max(_mean_path_length(hop_dist), 1.0)
     for i in range(n):
         for j in range(n):
             vol = float(demand[i, j])
@@ -127,10 +192,13 @@ def route_and_load(net: EvolvingNetwork) -> Dict[str, float]:
             net.nodes[i].demand += vol
             net.nodes[i].traffic_out += vol
             net.nodes[j].traffic_in += vol
-            if i not in g or j not in g or not nx.has_path(g, i, j):
+            if i not in idx or j not in idx:
                 dropped += vol
                 continue
-            path = nx.shortest_path(g, i, j, weight="weight")
+            path = _path_from_pred(nodes, idx, pred, i, j)
+            if path is None:
+                dropped += vol
+                continue
             edges_on_path = []
             ok = True
             for a, b in zip(path, path[1:]):
@@ -242,7 +310,7 @@ def route_and_load(net: EvolvingNetwork) -> Dict[str, float]:
         "total_loss": float(max(0.0, total_demand - delivered_total)),
     }
     if g.number_of_nodes() > 1 and nx.is_connected(g):
-        metrics["avg_path_length"] = float(nx.average_shortest_path_length(g, weight="weight"))
+        metrics["avg_path_length"] = _mean_path_length(dist)
     else:
         metrics["avg_path_length"] = float("nan")
     net.last_metrics = metrics
@@ -250,15 +318,31 @@ def route_and_load(net: EvolvingNetwork) -> Dict[str, float]:
 
 
 def scale_demand(matrix: np.ndarray, net: EvolvingNetwork, target_util: float) -> np.ndarray:
-    """Scale so total demand ≈ target_util × usable bandwidth. [ASSUMPTION]"""
-    usable_bw = sum(
-        e.bandwidth
-        for e in net.edges.values()
-        if not e.failed and not net.nodes[e.u].failed and not net.nodes[e.v].failed
-    )
+    """Scale so mean per-edge load ≈ target_util × usable bandwidth.
+
+    A demand unit is carried over several edges, so the offered load must be
+    divided by the mean hop count; otherwise a 55% per-edge target becomes a
+    165% load on a 3-hop topology and every policy is saturated.
+
+    Both the bandwidth budget and the hop count are measured on the *reference*
+    topology (minus currently failed elements), never on the controller's
+    mutated topology.  If they were measured on the current graph, a policy
+    that adds links would be rewarded with more absolute demand, which cancels
+    the capacity it just bought and makes policy comparisons unfair.
+    """
+    busy_nodes = {i for i, nd in net.nodes.items() if nd.failed}
+    usable_bw = 0.0
+    for u, v in net.reference.edges():
+        if u in busy_nodes or v in busy_nodes:
+            continue
+        e = net.edges.get(canon(u, v))
+        if e is not None and e.failed:
+            continue
+        usable_bw += float(e.bandwidth) if e is not None else float(net.cfg.default_bandwidth)
     total_bw = usable_bw or 1.0
     s = float(matrix.sum())
     if s <= 0:
         return matrix
-    factor = (target_util * total_bw) / s
+    hops = max(float(getattr(net, "ref_mean_hops", 3.0) or 3.0), 1.0)
+    factor = (target_util * total_bw) / (s * hops)
     return matrix * factor

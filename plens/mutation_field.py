@@ -111,7 +111,16 @@ def generate_field(
                 "score": score_candidate(net, u, v, "PRUNE", pp, pd, mc, budget, cfg, use_credit),
             }
         )
-        for l in alive:
+        # Candidate pruning for scalability: REWIRE is the only O(m n) family.
+        # Rank potential new endpoints by their combined pressure/debt signal and
+        # keep the top-k; k=0 retains the exhaustive (original) enumeration.
+        k = int(getattr(cfg, "rewire_targets_per_edge", 0) or 0)
+        targets = alive
+        if 0 < k < len(alive):
+            targets = sorted(
+                alive, key=lambda x: float(pp[x] + pd[x]), reverse=True
+            )[:k]
+        for l in targets:
             if l == u or l == v:
                 continue
             if canon(u, l) in existing:

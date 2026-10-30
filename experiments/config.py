@@ -20,6 +20,7 @@ class Config:
     # --- paths ---
     dataset_root: Path = DEFAULT_DATASET_ROOT
     project_root: Path = Path(__file__).resolve().parents[1]
+    output_dir: str = "results"  # relative to project_root, overridable by runners
     # cic | unsw | synthetic
     dataset: str = "cic"
     # [ASSUMPTION] CIC MachineLearningCVE has no Timestamp/IP; weekday file order is used as time.
@@ -36,6 +37,7 @@ class Config:
     default_prop_latency: float = 0.002  # seconds [SIM]
     max_degree: int = 8
     min_degree: int = 2
+    rewire_targets_per_edge: int = 8  # 0 = all targets; >0 keeps REWIRE enumeration O(m k)
     connectivity_required: bool = True  # [DIAGRAM]+[ASSUMPTION] stay connected
     resilience_threshold: float = 0.15
     lambda_target: float = 2.0  # local connectivity target [ASSUMPTION]
@@ -46,13 +48,13 @@ class Config:
     failure_mode: str = "random"  # random | targeted | multi | recovery
     sla_latency_ms: float = 2000.0  # SLA threshold for tail/SLA metrics [SIM] (queue term is normalised to <=1 s)
     sla_loss: float = 0.05
-    traffic_intensity: float = 0.55  # target median utilization after scaling
+    traffic_intensity: float = 0.30  # target median utilization after scaling
     failure_rate_edge: float = 0.01
     failure_rate_node: float = 0.001
     repair_steps: int = 5
     seed: int = 7
     n_seeds: int = 3  # demo default; the study runner overrides to 30
-    mm1_service_rate: float = 1.2e6  # packets-or-bytes proxy / step [SIM]
+    mm1_service_rate: float = 2.0e6  # per-link service rate = nominal bandwidth [SIM]
     routing_alpha: float = 2.0  # congestion sensitivity of routing weights [ASSUMPTION]
     hop_epsilon: float = 1e-4  # tiny per-hop cost, breaks weight ties [ASSUMPTION]
 
@@ -62,10 +64,8 @@ class Config:
     mutation_budget_min: float = 0.0
     mutation_budget_max: float = 8.0
     budget_mode: str = "adaptive"  # adaptive | fixed | legacy
-    budget_refill: float = 0.8
-    budget_base_refill: float = 2.5  # per-step account replenishment [ASSUMPTION]
-    budget_adapt: float = 0.25
-    budget_marginal_target: float = 0.10
+    budget_refill: float = 4.5
+    budget_base_refill: float = 0.5  # per-step stipend; debt must justify spending [ASSUMPTION]
     budget_uncertainty_z: float = 1.0
     budget_overload_window: int = 8
     budget_overload_threshold: float = 0.65
@@ -129,7 +129,7 @@ class Config:
 
     # --- ML [ML] ---
     window_length_L: int = 12
-    ml_horizon: int = 3  # forecast lead in windows
+    ml_horizon: int = 1  # forecast lead in windows (one 400-flow window ahead)
     flows_per_window: int = 400
     gru_hidden: int = 64
     gru_layers: int = 2
@@ -141,9 +141,9 @@ class Config:
     use_class_weights: bool = True
     ml_blend_beta: float = 0.3
     ml_prior_attack: float = 0.20
-    ml_load_gain: float = 0.35  # offered-load correction from p(attack)
-    ml_budget_gain: float = 0.25  # budget urgency from p(attack)
-    ml_uncertainty_damping: float = 0.25  # budget damping from forecast entropy
+    ml_tolerance_gain: float = 0.35  # lower debt tolerance when attack is likely
+    ml_budget_gain: float = 0.25  # refill urgency from p(attack)
+    ml_uncertainty_damping: float = 0.25  # refill damping from forecast entropy
     stress_scales: Dict[str, float] = field(
         default_factory=lambda: {"Normal": 0.85, "Attack": 1.25}
     )
@@ -171,7 +171,7 @@ class Config:
     )
 
     def artifacts_dir(self) -> Path:
-        d = self.project_root / "results"
+        d = self.project_root / self.output_dir
         d.mkdir(parents=True, exist_ok=True)
         return d
 

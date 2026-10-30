@@ -1,10 +1,10 @@
-"""[ML] The stress forecast must actually influence the simulation.
+"""[ML] The stress forecast must influence control, not the workload.
 
-Regression test for a real bug: the forecast used to scale the demand *matrix*,
-but scale_demand() renormalizes total demand to traffic_intensity x usable_bw,
-so the scalar cancelled and no_ml runs were bit-identical to none. [ASSUMPTION]
-The forecast now modulates the offered-load intensity target instead, so a
-High-forecast run must be measurably hotter than a Low-forecast one.
+Earlier revisions scaled the offered-demand target by the forecast.  That made
+ML runs face a different (hotter) workload than no-ML runs, so the comparison
+was confounded and the ablation could look better simply because it saw less
+traffic.  The forecast now modulates only internal urgency: a lower debt
+tolerance and a higher budget refill.  These tests pin that contract down.
 """
 from __future__ import annotations
 
@@ -25,7 +25,12 @@ class _FixedStress:
         self.L = L
 
     def predict_stress(self, window_hist_scaled: np.ndarray) -> dict:
-        return {"label": self.label, "class": {"Low": 0, "Medium": 1, "High": 2}[self.label], "prob": [1.0, 0.0, 0.0]}
+        return {
+            "label": self.label,
+            "class": {"Low": 0, "Medium": 1, "High": 2}[self.label],
+            "attack_prob": {"Low": 0.05, "Medium": 0.50, "High": 0.95}[self.label],
+            "uncertainty": 0.1,
+        }
 
 
 @pytest.fixture
@@ -52,23 +57,23 @@ def _demand(cfg: Config) -> np.ndarray:
 
 
 def _run(cfg: Config, demand, predictor) -> dict:
-    # demand_series must be (steps, n, n): one matrix per step [SIM]
     series = np.stack([demand] * cfg.simulation_steps)
     scaled = np.random.default_rng(0).random((cfg.simulation_steps, cfg.window_length_L)) * 0.5
     return run_simulation(cfg, series, scaled_feat=scaled, predictor=predictor)
 
 
-def test_high_forecast_runs_hotter_than_low(ml_cfg):
+def test_forecast_does_not_change_offered_workload(ml_cfg):
+    """High/Low forecasts must see exactly the same demand at every step."""
     demand = _demand(ml_cfg)
     hi = _run(ml_cfg, demand, _FixedStress("High", ml_cfg.window_length_L))
     lo = _run(ml_cfg, demand, _FixedStress("Low", ml_cfg.window_length_L))
-    hi_cong = np.mean([x["metrics"]["congestion"] for x in hi["history"]])
-    lo_cong = np.mean([x["metrics"]["congestion"] for x in lo["history"]])
-    assert hi_cong > lo_cong, "High-stress forecast must produce a hotter network than Low"
+    hi_dem = [x["metrics"]["total_demand"] for x in hi["history"]]
+    lo_dem = [x["metrics"]["total_demand"] for x in lo["history"]]
+    assert hi_dem == pytest.approx(lo_dem, rel=1e-12)
 
 
-def test_forecast_changes_controller_output(ml_cfg):
-    """Same traffic, same failures: only the predictor label differs."""
+def test_forecast_changes_controller_urgency(ml_cfg):
+    """Same traffic/failures; only the forecast label differs."""
     net_a = EvolvingNetwork(ml_cfg, np.random.default_rng(5))
     net_b = EvolvingNetwork(ml_cfg, np.random.default_rng(5))
     ctl_a = PLENSController(ml_cfg, net_a, ml_predictor=_FixedStress("High", ml_cfg.window_length_L))
@@ -78,9 +83,12 @@ def test_forecast_changes_controller_output(ml_cfg):
         hist = np.zeros((ml_cfg.window_length_L, 9))
         ctl_a.step(t, d, hist)
         ctl_b.step(t, d, hist)
-    a = [x["metrics"]["congestion"] for x in ctl_a.history]
-    b = [x["metrics"]["congestion"] for x in ctl_b.history]
-    assert any(x != y for x, y in zip(a, b)), "forecast label must change step-level outcomes"
+    tol_a = ctl_a.history[-1]["ml"]["tolerance_factor"]
+    tol_b = ctl_b.history[-1]["ml"]["tolerance_factor"]
+    assert tol_a < tol_b, "attack forecast must tighten the debt tolerance"
+    bud_a = [x["budget"] for x in ctl_a.history]
+    bud_b = [x["budget"] for x in ctl_b.history]
+    assert bud_a != bud_b, "forecast must change the budget trajectory"
 
 
 def test_no_ml_matches_no_predictor(ml_cfg):

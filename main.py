@@ -43,15 +43,9 @@ def build_demand_series(cfg: Config, bundle) -> tuple[np.ndarray, np.ndarray | N
 
         feats, dem, labels, _ = synthetic_windows(cfg, n_windows=steps, seed=cfg.seed + 5_000)
         return dem, None
-    lo, hi = bundle["splits"]["sim"]
-    dem_all = bundle["demand"][lo:hi]
-    scaled = bundle["scaled"]
-    # loop the segment if the simulation needs more steps than we have windows
-    reps = int(np.ceil(steps / max(len(dem_all), 1)))
-    dem = np.concatenate([dem_all] * max(reps, 1), axis=0)[:steps]
-    scaled_feat = scaled[lo : lo + len(dem_all)]
-    scaled_feat = np.concatenate([scaled_feat] * max(reps, 1), axis=0)[:steps]
-    return dem, scaled_feat
+    from experiments.traffic import replay_series
+
+    return replay_series(bundle, steps)
 
 
 def main() -> None:
@@ -63,9 +57,13 @@ def main() -> None:
     ap.add_argument("--skip-train", action="store_true", help="reuse existing model.pt")
     ap.add_argument("--skip-ablations", action="store_true")
     ap.add_argument("--no-figures", action="store_true")
+    ap.add_argument("--jobs", type=int, default=1, help="parallel worker processes")
+    ap.add_argument("--out", default=None, help="artifact directory relative to project root")
     args = ap.parse_args()
 
     overrides = {"dataset": args.dataset}
+    if args.out:
+        overrides["output_dir"] = args.out
     if args.steps is not None:
         overrides["simulation_steps"] = args.steps
     if args.seeds is not None:
@@ -109,7 +107,11 @@ def main() -> None:
         # wrap the in-memory model in the predictor interface the controller
         # expects (predict_stress on scaled (L, F) windows) [ML]
         predictor = TrainedPredictor(
-            out["model"], out["bundle"]["scaler"], cfg.window_length_L, cfg.ml_horizon
+            out["model"],
+            out["bundle"]["scaler"],
+            cfg.window_length_L,
+            cfg.ml_horizon,
+            threshold=out.get("threshold", 0.5),
         )
         bundle = out["bundle"]
 
@@ -119,7 +121,12 @@ def main() -> None:
 
         model_for_eval = getattr(predictor, "model", None)
         if model_for_eval is not None:
-            metrics = run_evaluation(cfg, model_for_eval, bundle)
+            metrics = run_evaluation(
+                cfg,
+                model_for_eval,
+                bundle,
+                threshold=getattr(predictor, "decision_threshold", 0.5),
+            )
             print(
                 f"      accuracy = {metrics['accuracy']:.4f}  "
                 f"macro_f1 = {metrics['macro_f1']:.4f}  "
@@ -129,21 +136,37 @@ def main() -> None:
 
     # --- demand series for the simulation [SIM] ---
     demand_series, scaled_feat = build_demand_series(cfg, bundle)
-    print(f"[2/4] experiment: {cfg.n_seeds} seeds x 4 policies x {cfg.simulation_steps} steps")
+    policies = (
+        "plens",
+        "static",
+        "random",
+        "greedy",
+        "threshold",
+        "fixed_budget",
+        "adaptive_budget",
+        "optimization",
+        "bandit",
+    )
+    print(
+        f"[2/4] experiment: {cfg.n_seeds} seeds x {len(policies)} policies x "
+        f"{cfg.simulation_steps} steps"
+    )
     res = run_experiment(
         cfg,
         demand_series,
         scaled_feat,
         predictor,
+        policies=policies,
         return_runs=True,
         save_runs=True,
+        n_jobs=args.jobs,
     )
 
     # --- ablations ---
     abl_summary = None
     if not args.skip_ablations:
-        print("[3/4] ablations (no_ml / no_debt / no_credit / no_budget)")
-        abl_summary = run_ablations(cfg, demand_series, scaled_feat, predictor)
+        print("[3/4] ablations (8 variants)")
+        abl_summary = run_ablations(cfg, demand_series, scaled_feat, predictor, n_jobs=args.jobs)
     else:
         print("[3/4] ablations skipped")
 

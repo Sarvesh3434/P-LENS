@@ -47,6 +47,7 @@ class StressPredictor:
         self.L = blob["L"]
         self.horizon = int(blob.get("horizon", 1))
         self.feature_names = blob.get("feature_names")
+        self.decision_threshold = float(blob.get("decision_threshold", 0.5))
 
     def predict_stress(self, window_hist_scaled: np.ndarray) -> dict:
         """window_hist_scaled: (L, F) already scaled. [ML]"""
@@ -54,7 +55,9 @@ class StressPredictor:
         with torch.no_grad():
             logits = self.model(x)
             prob = torch.softmax(logits, 1).numpy()[0]
-        return _decode(prob, self.horizon)
+        out = _decode(prob, self.horizon)
+        out["decision_threshold"] = self.decision_threshold
+        return out
 
 
 class TrainedPredictor:
@@ -62,16 +65,19 @@ class TrainedPredictor:
     .predict_stress() interface the controller expects from StressPredictor
     (without a round-trip through disk). [ML][ASSUMPTION: duck typing]"""
 
-    def __init__(self, model: StressGRU, scaler, window_length: int, horizon: int = 1):
+    def __init__(self, model: StressGRU, scaler, window_length: int, horizon: int = 1, threshold: float = 0.5):
         self.model = model
         self.model.eval()
         self.scaler = scaler
         self.L = window_length
         self.horizon = int(horizon)
+        self.decision_threshold = float(threshold)
 
     def predict_stress(self, window_hist_scaled: np.ndarray) -> dict:
         x = torch.from_numpy(window_hist_scaled.astype(np.float32)[None, ...])
         with torch.no_grad():
             logits = self.model(x)
             prob = torch.softmax(logits, 1).numpy()[0]
-        return _decode(prob, self.horizon)
+        out = _decode(prob, self.horizon)
+        out["decision_threshold"] = self.decision_threshold
+        return out

@@ -1,0 +1,748 @@
+{
+  "config": {
+    "dataset_root": "C:\\Users\\sarve\\Documents\\Project\\CN_Project_ML_Training\\DataSets",
+    "project_root": "C:\\Users\\sarve\\Documents\\Project\\CN_Project_ML_Training\\P-LENS",
+    "output_dir": "results/pilot_v3",
+    "dataset": "cic",
+    "network_size": 24,
+    "initial_topology": "small_world",
+    "er_p": 0.18,
+    "ba_m": 2,
+    "sw_k": 4,
+    "sw_p": 0.15,
+    "node_capacity": 10000000.0,
+    "default_bandwidth": 2000000.0,
+    "default_prop_latency": 0.002,
+    "max_degree": 8,
+    "min_degree": 2,
+    "rewire_targets_per_edge": 8,
+    "connectivity_required": true,
+    "resilience_threshold": 0.15,
+    "lambda_target": 2.0,
+    "simulation_steps": 120,
+    "traffic_pattern": "stationary",
+    "failure_mode": "random",
+    "sla_latency_ms": 2000.0,
+    "sla_loss": 0.05,
+    "traffic_intensity": 0.3,
+    "failure_rate_edge": 0.01,
+    "failure_rate_node": 0.001,
+    "repair_steps": 5,
+    "seed": 7,
+    "n_seeds": 6,
+    "mm1_service_rate": 2000000.0,
+    "routing_alpha": 2.0,
+    "hop_epsilon": 0.0001,
+    "delay_k": 5,
+    "mutation_budget_initial": 3.0,
+    "mutation_budget_min": 0.0,
+    "mutation_budget_max": 8.0,
+    "budget_mode": "adaptive",
+    "budget_refill": 4.5,
+    "budget_base_refill": 0.5,
+    "budget_uncertainty_z": 1.0,
+    "budget_overload_window": 8,
+    "budget_overload_threshold": 0.65,
+    "budget_overload_damping": 0.5,
+    "budget_failure_damping": 0.35,
+    "eta_g": 0.5,
+    "eta_s": 0.4,
+    "mutation_cost": {
+      "ADD": 1.0,
+      "PRUNE": 0.8,
+      "REWIRE": 1.2
+    },
+    "pressure_weights": {
+      "D": 0.25,
+      "F": 0.25,
+      "C": 0.25,
+      "R": 0.25
+    },
+    "congestion_weights": {
+      "u": 0.4,
+      "l": 0.3,
+      "q": 0.2,
+      "p": 0.1
+    },
+    "gain_weights": {
+      "u": 0.4,
+      "r": 0.4,
+      "s": 0.2
+    },
+    "field_weights": {
+      "need": 1.0,
+      "debt": 0.8,
+      "benefit": 0.7,
+      "credit": 0.6,
+      "cost": 0.5,
+      "penalty": 1.2
+    },
+    "debt_tolerance": 0.35,
+    "debt_accumulation": 0.18,
+    "debt_decay": 0.12,
+    "debt_persist_beta": 0.75,
+    "debt_duration_tau": 3.0,
+    "debt_relief": 0.2,
+    "debt_failure_penalty": 0.04,
+    "debt_gain_relief": 0.5,
+    "criticality_floor": 0.5,
+    "pressure_ema": 0.4,
+    "credit_lambda": 0.7,
+    "cooldown_steps": 4,
+    "max_mutations_per_step": 4,
+    "interaction_weight": 0.35,
+    "interaction_radius": 1,
+    "eval_mode": "replay_counterfactual",
+    "cf_bootstrap": 0,
+    "cf_z": 1.0,
+    "cf_min_effect": 0.005,
+    "cf_min_confidence": 0.2,
+    "cf_perturb_sigma": 0.15,
+    "policy": "plens",
+    "ablation": "no_interaction",
+    "threshold_trigger": 0.55,
+    "bandit_ucb_c": 0.6,
+    "window_length_L": 12,
+    "ml_horizon": 1,
+    "flows_per_window": 400,
+    "gru_hidden": 64,
+    "gru_layers": 2,
+    "dropout": 0.2,
+    "epochs": 25,
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "patience": 5,
+    "use_class_weights": true,
+    "ml_blend_beta": 0.3,
+    "ml_prior_attack": 0.2,
+    "ml_tolerance_gain": 0.35,
+    "ml_budget_gain": 0.25,
+    "ml_uncertainty_damping": 0.25,
+    "stress_scales": {
+      "Normal": 0.85,
+      "Attack": 1.25
+    },
+    "max_train_windows": 4000,
+    "max_rows_per_file": 200000,
+    "synthetic_windows": 1200,
+    "synthetic_nodes_hint": 8,
+    "synthetic_diurnal": true,
+    "synthetic_attack_frac": 0.15,
+    "cic_files": [
+      "Monday-WorkingHours.pcap_ISCX.csv",
+      "Tuesday-WorkingHours.pcap_ISCX.csv",
+      "Wednesday-workingHours.pcap_ISCX.csv",
+      "Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv",
+      "Thursday-WorkingHours-Afternoon-Infilteration.pcap_ISCX.csv",
+      "Friday-WorkingHours-Morning.pcap_ISCX.csv",
+      "Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv",
+      "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv"
+    ]
+  },
+  "seeds": [
+    7,
+    8,
+    9,
+    10,
+    11,
+    12
+  ],
+  "per_seed": {
+    "plens": [
+      {
+        "seed": 7,
+        "policy": "plens",
+        "ablation": "no_interaction",
+        "latency_mean": 1.7003035055657827,
+        "latency_p95_mean": 3.964427668305288,
+        "latency_p99_mean": 4.670027799007315,
+        "throughput_mean": 0.716892992686248,
+        "loss_mean": 0.283107007313752,
+        "congestion_mean": 0.4191657015549289,
+        "sla_violation_mean": 0.6003896994077373,
+        "sla_latency_violation_mean": 0.38362837135078703,
+        "sla_loss_violation_mean": 0.5977737598453323,
+        "connected_frac": 1.0,
+        "avg_path_length_mean": 0.011978061851533233,
+        "mutations": 77,
+        "add": 27,
+        "prune": 39,
+        "rewire": 11,
+        "mutation_rate": 0.575,
+        "n_success": 28,
+        "n_fail": 47,
+        "success_rate": 0.37333333333333335,
+        "pp_mean": 0.4336900904298256,
+        "pd_mean": 0.098343436954798,
+        "debt_persistence_mean": 0.8042635920795506,
+        "criticality_mean": 0.663815084461186,
+        "budget_mean": 1.8267235445367922,
+        "budget_spent_mean": 0.5950000000000001,
+        "overload_mean": 0.13800349026550027,
+        "eval_uncertainty_mean": 0.005776418145364516,
+        "mc_mean": -0.0036472794707483563,
+        "control_ms_mean": 8.626935833793445,
+        "eval_ms_mean": 43.3984333309733,
+        "step_ms_mean": 68.02545333242355
+      },
+      {
+        "seed": 8,
+        "policy": "plens",
+        "ablation": "no_interaction",
+        "latency_mean": 1.5013152924511266,
+        "latency_p95_mean": 3.7177409699773896,
+        "latency_p99_mean": 4.413513265680061,
+        "throughput_mean": 0.7386727529826759,
+        "loss_mean": 0.2613272470173241,
+        "congestion_mean": 0.3673260737078123,
+        "sla_violation_mean": 0.5325856170217648,
+        "sla_latency_violation_mean": 0.3449692437566783,
+        "sla_loss_violation_mean": 0.5312887421043171,
+        "connected_frac": 0.95,
+        "avg_path_length_mean": 0.01104393904862523,
+        "mutations": 72,
+        "add": 22,
+        "prune": 39,
+        "rewire": 11,
+        "mutation_rate": 0.49166666666666664,
+        "n_success": 26,
+        "n_fail": 41,
+        "success_rate": 0.3880597014925373,
+        "pp_mean": 0.41037723036616996,
+        "pd_mean": 0.08450211511167406,
+        "debt_persistence_mean": 0.689972315789777,
+        "criticality_mean": 0.663815084461186,
+        "budget_mean": 2.8523217384073023,
+        "budget_spent_mean": 0.5533333333333333,
+        "overload_mean": 0.10905299321020576,
+        "eval_uncertainty_mean": 0.00631178848115561,
+        "mc_mean": -0.002214766676345424,
+        "control_ms_mean": 7.327879993439032,
+        "eval_ms_mean": 38.51055166742299,
+        "step_ms_mean": 63.50833166313047
+      },
+      {
+        "seed": 9,
+        "policy": "plens",
+        "ablation": "no_interaction",
+        "latency_mean": 1.2666473805104794,
+        "latency_p95_mean": 3.2271274764244344,
+        "latency_p99_mean": 3.783349947177605,
+        "throughput_mean": 0.763086834627039,
+        "loss_mean": 0.2369131653729611,
+        "congestion_mean": 0.35574131869950565,
+        "sla_violation_mean": 0.5077128896683974,
+        "sla_latency_violation_mean": 0.29861216064363216,
+        "sla_loss_violation_mean": 0.5059026819432165,
+        "connected_frac": 1.0,
+        "avg_path_length_mean": 0.009823841225755808,
+        "mutations": 67,
+        "add": 25,
+        "prune": 35,
+        "rewire": 7,
+        "mutation_rate": 0.44166666666666665,
+        "n_success": 22,
+        "n_fail": 40,
+        "success_rate": 0.3548387096774194,
+        "pp_mean": 0.3993018559933887,
+        "pd_mean": 0.07456385300298501,
+        "debt_persistence_mean": 0.6864658965245283,
+        "criticality_mean": 0.663815084461186,
+        "budget_mean": 3.021401160669303,
+        "budget_spent_mean": 0.5116666666666666,
+        "overload_mean": 0.0958684151730487,
+        "eval_uncertainty_mean": 0.0035190650307309213,
+        "mc_mean": -0.0017812514632668639,
+        "control_ms_mean": 7.039946663038184,
+        "eval_ms_mean": 35.101389165113986,
+        "step_ms_mean": 58.1918033286153
+      },
+      {
+        "seed": 10,
+        "policy": "plens",
+        "ablation": "no_interaction",
+        "latency_mean": 1.5799434823867264,
+        "latency_p95_mean": 3.946024400087807,
+        "latency_p99_mean": 4.462299633844333,
+        "throughput_mean": 0.7019016330010456,
+        "loss_mean": 0.29809836699895437,
+        "congestion_mean": 0.3814472367636504,
+        "sla_violation_mean": 0.5977970005363008,
+        "sla_latency_violation_mean": 0.38955224081862766,
+        "sla_loss_violation_mean": 0.5958670783202187,
+        "connected_frac": 0.9166666666666666,
+        "avg_path_length_mean": 0.012708366008245636,
+        "mutations": 80,
+        "add": 27,
+        "prune": 45,
+        "rewire": 8,
+        "mutation_rate": 0.5666666666666667,
+        "n_success": 28,
+        "n_fail": 48,
+        "success_rate": 0.3684210526315789,
+        "pp_mean": 0.4232146730695686,
+        "pd_mean": 0.09256950649811754,
+        "debt_persistence_mean": 0.7653190934075546,
+        "criticality_mean": 0.663815084461186,
+        "budget_mean": 1.7974626933121736,
+        "budget_spent_mean": 0.6050000000000001,
+        "overload_mean": 0.12406112527891938,
+        "eval_uncertainty_mean": 0.010525767306123953,
+        "mc_mean": -0.0031320591152514832,
+        "control_ms_mean": 9.446376664952066,
+        "eval_ms_mean": 46.30501667173424,
+        "step_ms_mean": 71.67347666400019
+      },
+      {
+        "seed": 11,
+        "policy": "plens",
+        "ablation": "no_interaction",
+        "latency_mean": 1.5116383693096325,
+        "latency_p95_mean": 3.615567138352577,
+        "latency_p99_mean": 4.3672440702234265,
+        "throughput_mean": 0.684595724339101,
+        "loss_mean": 0.3154042756608989,
+        "congestion_mean": 0.4356531244106561,
+        "sla_violation_mean": 0.5585613794920039,
+        "sla_latency_violation_mean": 0.3473060962563581,
+        "sla_loss_violation_mean": 0.5550203655927054,
+        "connected_frac": 0.9083333333333333,
+        "avg_path_length_mean": 0.012136372560613909,
+        "mutations": 85,
+        "add": 29,
+        "prune": 48,
+        "rewire": 8,
+        "mutation_rate": 0.6333333333333333,
+        "n_success": 29,
+        "n_fail": 51,
+        "success_rate": 0.3625,
+        "pp_mean": 0.4415406608347547,
+        "pd_mean": 0.1050727882222525,
+        "debt_persistence_mean": 0.8319470573271793,
+        "criticality_mean": 0.663815084461186,
+        "budget_mean": 1.7260956519423318,
+        "budget_spent_mean": 0.6416666666666667,
+        "overload_mean": 0.1458168250881398,
+        "eval_uncertainty_mean": 0.00831664712405133,
+        "mc_mean": -0.005208392893103636,
+        "control_ms_mean": 11.1310891690664,
+        "eval_ms_mean": 47.317587506646916,
+        "step_ms_mean": 73.94728083648563
+      },
+      {
+        "seed": 12,
+        "policy": "plens",
+        "ablation": "no_interaction",
+        "latency_mean": 1.1543773837938587,
+        "latency_p95_mean": 2.911320151175253,
+        "latency_p99_mean": 3.4815304451333513,
+        "throughput_mean": 0.8002421453280449,
+        "loss_mean": 0.19975785467195506,
+        "congestion_mean": 0.35168103625710717,
+        "sla_violation_mean": 0.4526094897327289,
+        "sla_latency_violation_mean": 0.2292345838352352,
+        "sla_loss_violation_mean": 0.4494180280470335,
+        "connected_frac": 0.925,
+        "avg_path_length_mean": 0.010275497773236842,
+        "mutations": 85,
+        "add": 31,
+        "prune": 45,
+        "rewire": 9,
+        "mutation_rate": 0.55,
+        "n_success": 25,
+        "n_fail": 55,
+        "success_rate": 0.3125,
+        "pp_mean": 0.4250170401187449,
+        "pd_mean": 0.10348199202898088,
+        "debt_persistence_mean": 0.7952474001433661,
+        "criticality_mean": 0.663815084461186,
+        "budget_mean": 2.4407159151321234,
+        "budget_spent_mean": 0.6483333333333334,
+        "overload_mean": 0.12608491047523118,
+        "eval_uncertainty_mean": 0.00808875017800349,
+        "mc_mean": -0.010441043294018976,
+        "control_ms_mean": 8.19667583273258,
+        "eval_ms_mean": 45.26291583024431,
+        "step_ms_mean": 69.01573499684068
+      }
+    ]
+  },
+  "aggregate": {
+    "plens": {
+      "latency_mean": {
+        "mean": 1.4523709023362674,
+        "ci95": 0.16278893973748834,
+        "values": [
+          1.7003035055657827,
+          1.5013152924511266,
+          1.2666473805104794,
+          1.5799434823867264,
+          1.5116383693096325,
+          1.1543773837938587
+        ]
+      },
+      "latency_p95_mean": {
+        "mean": 3.5637013007204583,
+        "ci95": 0.3341697423729823,
+        "values": [
+          3.964427668305288,
+          3.7177409699773896,
+          3.2271274764244344,
+          3.946024400087807,
+          3.615567138352577,
+          2.911320151175253
+        ]
+      },
+      "latency_p99_mean": {
+        "mean": 4.196327526844349,
+        "ci95": 0.3672059814886279,
+        "values": [
+          4.670027799007315,
+          4.413513265680061,
+          3.783349947177605,
+          4.462299633844333,
+          4.3672440702234265,
+          3.4815304451333513
+        ]
+      },
+      "throughput_mean": {
+        "mean": 0.7342320138273591,
+        "ci95": 0.033984604079064264,
+        "values": [
+          0.716892992686248,
+          0.7386727529826759,
+          0.763086834627039,
+          0.7019016330010456,
+          0.684595724339101,
+          0.8002421453280449
+        ]
+      },
+      "loss_mean": {
+        "mean": 0.2657679861726409,
+        "ci95": 0.03398460407906423,
+        "values": [
+          0.283107007313752,
+          0.2613272470173241,
+          0.2369131653729611,
+          0.29809836699895437,
+          0.3154042756608989,
+          0.19975785467195506
+        ]
+      },
+      "congestion_mean": {
+        "mean": 0.38516908189894344,
+        "ci95": 0.027774143367595715,
+        "values": [
+          0.4191657015549289,
+          0.3673260737078123,
+          0.35574131869950565,
+          0.3814472367636504,
+          0.4356531244106561,
+          0.35168103625710717
+        ]
+      },
+      "sla_violation_mean": {
+        "mean": 0.5416093459764889,
+        "ci95": 0.045336238780221166,
+        "values": [
+          0.6003896994077373,
+          0.5325856170217648,
+          0.5077128896683974,
+          0.5977970005363008,
+          0.5585613794920039,
+          0.4526094897327289
+        ]
+      },
+      "sla_latency_violation_mean": {
+        "mean": 0.33221711611021976,
+        "ci95": 0.04808385455510407,
+        "values": [
+          0.38362837135078703,
+          0.3449692437566783,
+          0.29861216064363216,
+          0.38955224081862766,
+          0.3473060962563581,
+          0.2292345838352352
+        ]
+      },
+      "sla_loss_violation_mean": {
+        "mean": 0.5392117759754705,
+        "ci95": 0.04543992483650291,
+        "values": [
+          0.5977737598453323,
+          0.5312887421043171,
+          0.5059026819432165,
+          0.5958670783202187,
+          0.5550203655927054,
+          0.4494180280470335
+        ]
+      },
+      "connected_frac": {
+        "mean": 0.9500000000000001,
+        "ci95": 0.03293776398446465,
+        "values": [
+          1.0,
+          0.95,
+          1.0,
+          0.9166666666666666,
+          0.9083333333333333,
+          0.925
+        ]
+      },
+      "avg_path_length_mean": {
+        "mean": 0.011327679744668443,
+        "ci95": 0.0009075739374501361,
+        "values": [
+          0.011978061851533233,
+          0.01104393904862523,
+          0.009823841225755808,
+          0.012708366008245636,
+          0.012136372560613909,
+          0.010275497773236842
+        ]
+      },
+      "mutations": {
+        "mean": 77.66666666666667,
+        "ci95": 5.76268147460692,
+        "values": [
+          77.0,
+          72.0,
+          67.0,
+          80.0,
+          85.0,
+          85.0
+        ]
+      },
+      "add": {
+        "mean": 26.833333333333332,
+        "ci95": 2.5006541366432726,
+        "values": [
+          27.0,
+          22.0,
+          25.0,
+          27.0,
+          29.0,
+          31.0
+        ]
+      },
+      "prune": {
+        "mean": 41.833333333333336,
+        "ci95": 3.9335875624054832,
+        "values": [
+          39.0,
+          39.0,
+          35.0,
+          45.0,
+          48.0,
+          45.0
+        ]
+      },
+      "rewire": {
+        "mean": 9.0,
+        "ci95": 1.3389349000853876,
+        "values": [
+          11.0,
+          11.0,
+          7.0,
+          8.0,
+          8.0,
+          9.0
+        ]
+      },
+      "mutation_rate": {
+        "mean": 0.5430555555555556,
+        "ci95": 0.05391099775567453,
+        "values": [
+          0.575,
+          0.49166666666666664,
+          0.44166666666666665,
+          0.5666666666666667,
+          0.6333333333333333,
+          0.55
+        ]
+      },
+      "n_success": {
+        "mean": 26.333333333333332,
+        "ci95": 2.066021404643341,
+        "values": [
+          28.0,
+          26.0,
+          22.0,
+          28.0,
+          29.0,
+          25.0
+        ]
+      },
+      "n_fail": {
+        "mean": 47.0,
+        "ci95": 4.610515517090614,
+        "values": [
+          47.0,
+          41.0,
+          40.0,
+          48.0,
+          51.0,
+          55.0
+        ]
+      },
+      "success_rate": {
+        "mean": 0.3599421328558115,
+        "ci95": 0.02063486156668204,
+        "values": [
+          0.37333333333333335,
+          0.3880597014925373,
+          0.3548387096774194,
+          0.3684210526315789,
+          0.3625,
+          0.3125
+        ]
+      },
+      "pp_mean": {
+        "mean": 0.42219025846874203,
+        "ci95": 0.01228797000175133,
+        "values": [
+          0.4336900904298256,
+          0.41037723036616996,
+          0.3993018559933887,
+          0.4232146730695686,
+          0.4415406608347547,
+          0.4250170401187449
+        ]
+      },
+      "pd_mean": {
+        "mean": 0.09308894863646801,
+        "ci95": 0.00944345891245365,
+        "values": [
+          0.098343436954798,
+          0.08450211511167406,
+          0.07456385300298501,
+          0.09256950649811754,
+          0.1050727882222525,
+          0.10348199202898088
+        ]
+      },
+      "debt_persistence_mean": {
+        "mean": 0.7622025592119925,
+        "ci95": 0.04891937759622313,
+        "values": [
+          0.8042635920795506,
+          0.689972315789777,
+          0.6864658965245283,
+          0.7653190934075546,
+          0.8319470573271793,
+          0.7952474001433661
+        ]
+      },
+      "criticality_mean": {
+        "mean": 0.663815084461186,
+        "ci95": 0.0,
+        "values": [
+          0.663815084461186,
+          0.663815084461186,
+          0.663815084461186,
+          0.663815084461186,
+          0.663815084461186,
+          0.663815084461186
+        ]
+      },
+      "budget_mean": {
+        "mean": 2.277453450666671,
+        "ci95": 0.4594002482402468,
+        "values": [
+          1.8267235445367922,
+          2.8523217384073023,
+          3.021401160669303,
+          1.7974626933121736,
+          1.7260956519423318,
+          2.4407159151321234
+        ]
+      },
+      "budget_spent_mean": {
+        "mean": 0.5925,
+        "ci95": 0.0419843983368073,
+        "values": [
+          0.5950000000000001,
+          0.5533333333333333,
+          0.5116666666666666,
+          0.6050000000000001,
+          0.6416666666666667,
+          0.6483333333333334
+        ]
+      },
+      "overload_mean": {
+        "mean": 0.12314795991517419,
+        "ci95": 0.01469723582453211,
+        "values": [
+          0.13800349026550027,
+          0.10905299321020576,
+          0.0958684151730487,
+          0.12406112527891938,
+          0.1458168250881398,
+          0.12608491047523118
+        ]
+      },
+      "eval_uncertainty_mean": {
+        "mean": 0.007089739377571636,
+        "ci95": 0.0019399494998087266,
+        "values": [
+          0.005776418145364516,
+          0.00631178848115561,
+          0.0035190650307309213,
+          0.010525767306123953,
+          0.00831664712405133,
+          0.00808875017800349
+        ]
+      },
+      "mc_mean": {
+        "mean": -0.004404132152122457,
+        "ci95": 0.0025543984413747465,
+        "values": [
+          -0.0036472794707483563,
+          -0.002214766676345424,
+          -0.0017812514632668639,
+          -0.0031320591152514832,
+          -0.005208392893103636,
+          -0.010441043294018976
+        ]
+      },
+      "control_ms_mean": {
+        "mean": 8.628150692836952,
+        "ci95": 1.2046940190376365,
+        "values": [
+          8.626935833793445,
+          7.327879993439032,
+          7.039946663038184,
+          9.446376664952066,
+          11.1310891690664,
+          8.19667583273258
+        ]
+      },
+      "eval_ms_mean": {
+        "mean": 42.64931569535596,
+        "ci95": 3.864888689468271,
+        "values": [
+          43.3984333309733,
+          38.51055166742299,
+          35.101389165113986,
+          46.30501667173424,
+          47.317587506646916,
+          45.26291583024431
+        ]
+      },
+      "step_ms_mean": {
+        "mean": 67.39368013691596,
+        "ci95": 4.583593288674237,
+        "values": [
+          68.02545333242355,
+          63.50833166313047,
+          58.1918033286153,
+          71.67347666400019,
+          73.94728083648563,
+          69.01573499684068
+        ]
+      }
+    }
+  },
+  "wilcoxon_vs_plens": {},
+  "statistics_vs_plens": {}
+}

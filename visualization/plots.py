@@ -31,12 +31,22 @@ POLICY_COLORS = {
     "static": "#7f7f7f",
     "random": "#ff7f0e",
     "greedy": "#2ca02c",
+    "threshold": "#d62728",
+    "fixed_budget": "#9467bd",
+    "adaptive_budget": "#8c564b",
+    "optimization": "#e377c2",
+    "bandit": "#17becf",
 }
 POLICY_LABELS = {
     "plens": "P-LENS",
     "static": "Static",
     "random": "Random-adaptive",
     "greedy": "Greedy",
+    "threshold": "Threshold",
+    "fixed_budget": "Fixed budget",
+    "adaptive_budget": "Adaptive budget",
+    "optimization": "One-step optimization",
+    "bandit": "Bandit",
 }
 METRIC_LABELS = {
     "latency": "Latency (s, delivered-weighted)",

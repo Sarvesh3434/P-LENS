@@ -39,6 +39,7 @@ from plens.evaluation import (
     credit_is_valid,
     evaluate_pending,
     evaluate_replay,
+    replay_branch,
 )
 from plens.indicators import compute_indicators
 from plens import mutations as muts
@@ -71,6 +72,7 @@ class PLENSController:
         self._overload_hist = deque(maxlen=max(cfg.budget_overload_window, 1))
         self._eval_hist = deque(maxlen=max(cfg.budget_overload_window, 1))
         self.ml_budget_factor: float | None = None
+        self.ml_tolerance_factor: float = 1.0
         self._ablate()
 
     def _ablate(self) -> None:
@@ -116,10 +118,13 @@ class PLENSController:
         apply_failures(net)
 
         # --- [ML] forecast: continuous attack probability + uncertainty ---
+        # The forecast never changes the offered workload.  It only changes the
+        # controller's internal urgency (debt tolerance and refill), so ML and
+        # no-ML runs see bit-identical traffic and failures.
         ml_pred = None
         base_intensity = float(cfg.traffic_intensity if intensity is None else intensity)
-        target_intensity = base_intensity
         self.ml_budget_factor = None
+        self.ml_tolerance_factor = 1.0
         if self.use_ml and feature_window_hist is not None and t >= cfg.window_length_L:
             ml_pred = self.ml.predict_stress(feature_window_hist)
             prior = float(cfg.ml_prior_attack)
@@ -129,15 +134,21 @@ class PLENSController:
             p = float(p)
             u = float(ml_pred.get("uncertainty", 0.0))
             denom = max(prior, 1.0 - prior)
-            delta = (p - prior) / denom
-            target_intensity = base_intensity * (1.0 + cfg.ml_load_gain * delta)
-            self.ml_budget_factor = (1.0 + cfg.ml_budget_gain * delta) * (
-                1.0 - cfg.ml_uncertainty_damping * u
+            delta = float(np.clip((p - prior) / denom, -1.0, 1.0))
+            self.ml_tolerance_factor = float(
+                np.clip(1.0 - cfg.ml_tolerance_gain * delta, 0.5, 1.5)
             )
-            ml_pred = {**ml_pred, "load_factor": target_intensity / max(base_intensity, 1e-9)}
+            self.ml_budget_factor = float(
+                np.clip(
+                    (1.0 + cfg.ml_budget_gain * delta)
+                    * (1.0 - cfg.ml_uncertainty_damping * u),
+                    0.5,
+                    1.5,
+                )
+            )
+            ml_pred = {**ml_pred, "load_factor": 1.0, "tolerance_factor": self.ml_tolerance_factor}
 
-        target_intensity = float(np.clip(target_intensity, 0.20, 1.20))
-        net.set_demand(scale_demand(demand, net, target_intensity))
+        net.set_demand(scale_demand(demand, net, base_intensity))
         metrics = route_and_load(net)
 
         ind = compute_indicators(net, net.demand)
@@ -232,11 +243,35 @@ class PLENSController:
         n_success = 0
         n_fail = 0
         confidences: List[float] = []
+        due: List[dict] = []
         for item in self.pending:
             if item["t_eval"] > t:
                 still.append(item)
-                continue
-            ev = self._evaluate_item(item)
+            else:
+                due.append(item)
+        # Mutations accepted in the same step share the factual replay branch:
+        # only the counterfactual branch differs per mutation.  Computing the
+        # factual trajectory once per (t0, t_eval) halves replay cost without
+        # changing the estimator.
+        replay_cache: Dict[tuple, tuple] = {}
+        for item in due:
+            logs = factual = None
+            if self.eval_mode == "replay_counterfactual" and self.do_eval:
+                key = (item["t0"], item["t_eval"])
+                if key not in replay_cache:
+                    logs = [self.step_log[s] for s in range(item["t0"], item["t_eval"])]
+                    final = dict(self.step_log.get(item["t_eval"], self.step_log[item["t0"]]))
+                    final["mutations"] = []
+                    logs.append(final)
+                    snap = self.step_log[item["t0"]]["pre"]
+                    factual = (
+                        replay_branch(snap, logs, len(logs), None, cfg)
+                        if snap is not None
+                        else None
+                    )
+                    replay_cache[key] = (logs, factual)
+                logs, factual = replay_cache[key]
+            ev = self._evaluate_item(item, logs=logs, factual=factual)
             gain_credit = ev.get("gain_lcb", ev["G"]) if self.use_uncertainty else ev["G"]
             confidence = ev.get("confidence", 1.0) if self.use_uncertainty else 1.0
             confidences.append(float(confidence))
@@ -317,16 +352,9 @@ class PLENSController:
             overload=overload,
             failure_rate=failure_rate,
             uncertainty=eval_uncertainty,
+            refill_scale=self.ml_budget_factor or 1.0,
             mode=self.budget_mode,
         )
-        if self.use_ml and self.ml_budget_factor is not None and self.use_budget:
-            self.budget = float(
-                np.clip(
-                    self.budget * self.ml_budget_factor,
-                    cfg.mutation_budget_min,
-                    cfg.mutation_budget_max,
-                )
-            )
 
         self.topology_snapshots.append([list(e) for e in net.G.edges()])
         rec = {
@@ -383,6 +411,16 @@ class PLENSController:
         return field
 
     def _plens_policy(self):
+        # Debt-gated plasticity: structural change is justified only when a
+        # node has unresolved pressure above tolerance.  Without this gate the
+        # field's always-positive benefit term makes the controller mutate on
+        # every step, which is churn rather than adaptation.
+        cfg = self.cfg
+        tol = cfg.debt_tolerance * self.ml_tolerance_factor
+        pressure = float(np.max(self.pp))
+        debt = float(np.max(self.pd)) if self.use_debt else 0.0
+        if pressure < cfg.threshold_trigger * self.ml_tolerance_factor and debt < tol:
+            return [], []
         field = self._field()
         weight = self.cfg.interaction_weight if self.use_interaction else 0.0
         return select_mutations(
@@ -553,17 +591,16 @@ class PLENSController:
         return chosen
 
     # ----------------------------------------------------------- evaluation
-    def _evaluate_item(self, item: dict) -> Dict[str, float]:
+    def _evaluate_item(self, item: dict, logs=None, factual=None) -> Dict[str, float]:
         cfg = self.cfg
         if self.eval_mode == "replay_counterfactual":
-            t0, t_eval = item["t0"], item["t_eval"]
-            logs = []
-            for s in range(t0, t_eval):
-                logs.append(self.step_log[s])
-            final = dict(self.step_log.get(t_eval, self.step_log[t0]))
-            final["mutations"] = []
-            logs.append(final)
-            snapshot = self.step_log[t0]["pre"]
+            if logs is None:
+                t0, t_eval = item["t0"], item["t_eval"]
+                logs = [self.step_log[s] for s in range(t0, t_eval)]
+                final = dict(self.step_log.get(t_eval, self.step_log[t0]))
+                final["mutations"] = []
+                logs.append(final)
+            snapshot = self.step_log[item["t0"]]["pre"]
             if snapshot is None:
                 return evaluate_pending(self.net, item["detail"], cfg, item["n_mutations"])
             return evaluate_replay(
@@ -573,6 +610,7 @@ class PLENSController:
                 token=item["token"],
                 cfg=cfg,
                 n_mutations=1,
+                factual_traj=factual,
             )
         if self.eval_mode == "immediate":
             return evaluate_pending(self.net, item["detail"], cfg, item["n_mutations"])

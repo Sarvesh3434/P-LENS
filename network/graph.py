@@ -60,6 +60,16 @@ class EvolvingNetwork:
         self.n = cfg.network_size
         self.G = self._build_initial(cfg)
         self.reference = self.G.copy()
+        # Fixed reference hop count: demand scaling must not depend on the
+        # controller's current topology, otherwise adding links would inflate
+        # offered load and erase the benefit of extra capacity.
+        total, pairs = 0.0, 0
+        for s, dist in nx.all_pairs_shortest_path_length(self.reference):
+            for t, hops in dist.items():
+                if t > s:
+                    total += float(hops)
+                    pairs += 1
+        self.ref_mean_hops = max(total / max(pairs, 1), 1.0)
         self.nodes: Dict[int, NodeState] = {
             i: NodeState(i, cfg.node_capacity) for i in range(self.n)
         }
@@ -68,6 +78,9 @@ class EvolvingNetwork:
         self.demand = np.zeros((self.n, self.n), dtype=float)
         self.step = 0
         self.last_metrics: Dict[str, float] = {}
+        # Mean hop count measured on the alive graph; used by scale_demand to
+        # convert a per-edge utilization target into a total offered load.
+        self.mean_hops: float = 3.0
 
     def _build_initial(self, cfg: Config) -> nx.Graph:
         kind = cfg.initial_topology

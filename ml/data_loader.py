@@ -10,8 +10,12 @@ target as an input.
 
 [ASSUMPTION] These files have no Timestamp and no Source IP. Time is file order
 then row order. Endpoints are hashed from Destination Port (CIC) or
-proto/service (UNSW). The dataset supplies traffic/condition information only;
-the topology itself is simulated.
+proto/service (UNSW); the server endpoint comes from the port/service and the
+client endpoint from a per-flow index, so traffic is hub-like but not collapsed
+onto a single node pair. Each flow is sharded over four client/replica pairs to
+emulate flow-level load balancing; without this a single elephant flow is
+bandwidth-limited on every topology and no mutation can help. The dataset supplies traffic/condition information
+only; the topology itself is simulated.
 """
 
 from __future__ import annotations
@@ -141,18 +145,34 @@ def _flush_window(
     demand = np.zeros((n_nodes, n_nodes), dtype=np.float64)
     ports = set()
     attack_frac = 0.0
-    for r in buf:
+    for k, r in enumerate(buf):
         if kind == "cic":
             ports.add(r["dst_port"])
-            src = _crc_node(f"src:{r['dst_port']}", n_nodes, "src")
-            dst = _crc_node(f"dst:{r['dst_port']}", n_nodes, "dst")
+            # The dataset has no IP addresses.  Mapping both endpoints from the
+            # destination port alone collapses almost every byte onto one node
+            # pair (measured: top pair = 98% of demand), which makes topology
+            # adaptation meaningless.  Keep the port as the *server* identity
+            # (popular ports are popular servers) and spread clients over nodes
+            # with a per-flow index.
+            #
+            # Each flow is also sharded over four (client, replica) pairs, the
+            # way per-packet ECMP spreads a large flow over parallel paths.  A
+            # single elephant flow on one path is bandwidth-limited on every
+            # topology, so without sharding no mutation can ever help it.
+            srcs = [_crc_node(f"client:{r['dst_port']}:{k}:{q}", n_nodes, "src") for q in range(4)]
+            dsts = [_crc_node(f"server:{r['dst_port']}:{q}", n_nodes, "dst") for q in range(4)]
         else:
-            src = _crc_node(r.get("proto", "") + r.get("service", ""), n_nodes, "src")
-            dst = _crc_node(r.get("service", "") + r.get("proto", "")[::-1], n_nodes, "dst")
+            srcs = [
+                _crc_node(f"{r.get('proto', '')}:{r.get('service', '')}:{k}:{q}", n_nodes, "src")
+                for q in range(4)
+            ]
+            dsts = [_crc_node(f"server:{r.get('service', '')}:{q}", n_nodes, "dst") for q in range(4)]
         attack_frac += _label_from_row(r, kind)
-        if src == dst:
-            dst = (dst + 1) % n_nodes
-        demand[src, dst] += r["fwd_bytes"] + r["bwd_bytes"]
+        share = (r["fwd_bytes"] + r["bwd_bytes"]) / 4.0
+        for src, dst in zip(srcs, dsts):
+            if src == dst:
+                dst = (dst + 1) % n_nodes
+            demand[src, dst] += share
     feat[8] = len(ports) / max(n, 1) if kind == "cic" else 0.0
     # The label is produced only after every feature has been computed.
     label = int(attack_frac > 0)
@@ -192,6 +212,32 @@ def windows_from_rows(rows: Iterator[dict], cfg: Config, kind: str):
 
 
 def load_cic_windows(cfg: Config):
+    # Parsing eight CSVs with the pure-Python reader dominates rerun time.
+    # Cache the *windowed* tensors keyed by the parameters that change them.
+    cache = cfg.project_root / "data" / "processed" / (
+        f"windows_cic_n{cfg.network_size}_r{cfg.max_rows_per_file}_w{cfg.flows_per_window}.npz"
+    )
+    signature = (
+        "v4|"
+        + "|".join(cfg.cic_files)
+        + f"|n{cfg.network_size}|r{cfg.max_rows_per_file}|w{cfg.flows_per_window}"
+    )
+    if cache.exists():
+        try:
+            z = np.load(cache, allow_pickle=False)
+            if str(z["signature"]) == signature:
+                bounds = []
+                for row in z["bounds"].tolist():
+                    parts = str(row).rsplit("|", 2)
+                    bounds.append((parts[0], int(parts[1]), int(parts[2])))
+                metas = [
+                    {"attack_frac": float(a), "n_flows": int(n)}
+                    for a, n in zip(z["attack_frac"], z["n_flows"])
+                ]
+                return z["feats"], z["demand"], z["labels"], metas, bounds
+        except Exception:
+            pass
+
     feats_all = []
     dem_all = []
     lab_all = []
@@ -213,6 +259,20 @@ def load_cic_windows(cfg: Config):
     feats = np.concatenate(feats_all, axis=0) if feats_all else np.zeros((0, len(FEATURE_NAMES)))
     dem = np.concatenate(dem_all, axis=0)
     labels = np.concatenate(lab_all, axis=0) if lab_all else np.zeros((0,), dtype=np.int64)
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            cache,
+            feats=feats,
+            demand=dem,
+            labels=labels,
+            signature=np.asarray(signature),
+            bounds=np.asarray([f"{name}|{a}|{c}" for name, a, c in file_bounds]),
+            attack_frac=np.asarray([m["attack_frac"] for m in meta_all], dtype=float),
+            n_flows=np.asarray([m["n_flows"] for m in meta_all], dtype=int),
+        )
+    except Exception:
+        pass
     return feats, dem, labels, meta_all, file_bounds
 
 
@@ -229,28 +289,86 @@ def load_unsw_windows(cfg: Config):
     return feats, dem, labels, metas, bounds
 
 
+def day_blocked_blocks(n: int, bounds=None, fractions=(0.65, 0.15, 0.15, 0.05)):
+    """Chronological blocks that preserve every day/attack type.
+
+    A single global day split (train on Mon--Wed, test on Thu--Fri) creates a
+    severe concept shift: the test day contains attack families never seen in
+    training, so even a strong model collapses to chance.  Instead, every
+    contiguous source block is split *in time order* into train / validation /
+    test / simulation fractions.  No test window precedes a training window
+    from the same block, the scaler is fit on training blocks only, and
+    sequences never cross block boundaries, so the protocol remains
+    leakage-free while covering all days.
+
+    The simulation segment is held out **within every block**, not just the
+    final day.  The controller replay therefore sees benign and attack periods
+    from every day, while remaining disjoint from the ML test windows.  This is
+    important for the ``no_ml`` comparison: a single DDoS-only segment makes
+    every window an attack and removes the regime changes that a forecast can
+    anticipate.
+
+    All returned intervals are half-open ``[lo, hi)``.  CIC files are days
+    (``bounds`` has >= 8 entries).  UNSW uses the official training file for
+    train/val and splits the official testing file into test/sim.
+    """
+    if len(fractions) == 3:
+        # Backwards-compatible three-way call: keep 80% of the test region for
+        # evaluation and reserve the final 20% for simulation.
+        tr_f, va_f, te_f = fractions
+        sim_f = 0.0
+    else:
+        tr_f, va_f, te_f, sim_f = fractions
+    out = {"train": [], "val": [], "test": [], "sim": []}
+
+    def _split_block(a: int, c: int) -> None:
+        m = c - a
+        if m <= 0:
+            return
+        a1 = a + int(round(tr_f * m))
+        a2 = a1 + int(round(va_f * m))
+        a3 = a2 + int(round(te_f * m))
+        a1 = min(max(a1, a + 1), c)
+        a2 = min(max(a2, a1 + 1 if a1 < c else a1), c)
+        a3 = min(max(a3, a2 + 1 if a2 < c else a2), c)
+        if a3 >= c:
+            # tiny block: give the final window to sim only when it was requested
+            a3 = max(a2, c - 1) if sim_f > 0 else c
+        out["train"].append((a, a1))
+        if a1 < a2:
+            out["val"].append((a1, a2))
+        if a2 < a3:
+            out["test"].append((a2, a3))
+        if sim_f > 0 and a3 < c:
+            out["sim"].append((a3, c))
+
+    if bounds and len(bounds) == 2:
+        # Official train/test files: never mix them.  Use the train file for
+        # train/val and reserve part of the official test file for replay.
+        (_n0, a0, c0), (_n1, a1, c1) = bounds
+        m0 = c0 - a0
+        a0v = a0 + int(round(0.85 * m0))
+        out["train"].append((a0, min(a0v, c0)))
+        if a0v < c0:
+            out["val"].append((a0v, c0))
+        m1 = c1 - a1
+        a1t = a1 + int(round(0.80 * m1)) if sim_f > 0 else c1
+        out["test"].append((a1, min(a1t, c1)))
+        if sim_f > 0 and a1t < c1:
+            out["sim"].append((a1t, c1))
+    elif bounds and len(bounds) >= 2:
+        for _name, a, c in bounds:
+            _split_block(int(a), int(c))
+    else:
+        _split_block(0, n)
+    return out
+
+
 def chronological_split(n: int, bounds=None):
-    """Four disjoint segments with 1-window gaps: train, val, test, sim. [ML]"""
-    # Prefer file-based split for CIC (Mon/Tue train, Wed val, Thu test, Fri sim)
-    if bounds and len(bounds) >= 8:
-        # indices 0-1 Mon Tue, 2 Wed, 3-4 Thu, 5-7 Fri
-        tr0, tr1 = bounds[0][1], bounds[1][2]
-        va0, va1 = bounds[2][1], bounds[2][2]
-        te0, te1 = bounds[3][1], bounds[4][2]
-        sm0, sm1 = bounds[5][1], bounds[7][2]
-        # gaps: drop last window of each preceding segment
-        return {
-            "train": (tr0, max(tr0, tr1 - 1)),
-            "val": (va0, max(va0, va1 - 1)),
-            "test": (te0, max(te0, te1 - 1)),
-            "sim": (sm0, sm1),
-        }
-    a = int(0.45 * n)
-    b = int(0.60 * n)
-    c = int(0.78 * n)
+    """Overall [lo, hi) span of each day-blocked part (legacy convenience)."""
+    blocks = day_blocked_blocks(n, bounds)
     return {
-        "train": (0, max(1, a - 1)),
-        "val": (a + 1, max(a + 2, b - 1)),
-        "test": (b + 1, max(b + 2, c - 1)),
-        "sim": (c + 1, n),
+        part: (min(b[0] for b in bs), max(b[1] for b in bs))
+        for part, bs in blocks.items()
+        if bs
     }

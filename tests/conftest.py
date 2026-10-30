@@ -26,6 +26,10 @@ def cfg() -> Config:
         max_mutations_per_step=2,
         mutation_budget_initial=3.0,
         mutation_budget_max=8.0,
+        # Component tests exercise the mechanistic loop on a benign fixture;
+        # lower the activation thresholds so pressure is above tolerance.
+        debt_tolerance=0.05,
+        threshold_trigger=0.10,
     )
 
 

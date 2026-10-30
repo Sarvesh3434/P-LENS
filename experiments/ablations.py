@@ -2,12 +2,18 @@
 
 Runs the same seeds/traffic/failures as the main experiment (common random
 numbers) with `ablation` set to one of:
-    no_ml     – PP/PD/B/MF computed from observed indicators only
-    no_debt   – PD forced to 0 (debt term drops out of MF, refill loses mean(PD))
-    no_credit – MC stays empty (credit term drops out of MF)
-    no_budget – budget pinned to B_max (no throttle; still capped per step)
+    none            – full model
+    no_ml           – prediction detached from load target and budget
+    no_debt         – PD forced to 0 (debt term drops out of MF, refill loses mean(PD))
+    no_credit       – MC stays empty (credit term drops out of MF)
+    no_budget       – budget pinned to B_max (no throttle; still capped per step)
+    no_uncertainty  – point-gain credit/relief instead of the lower confidence bound
+    no_interaction  – marginal (score-only) selection instead of joint scoring
+    fixed_score     – uniform mutation score (simple heuristic ranking)
 Each ablation runs the full P-LENS machinery — none is replaced by another
-policy — so the comparison isolates exactly one mechanism.
+policy — so the comparison isolates exactly one mechanism.  ``no_budget``
+combined with ``no_debt``/``no_credit`` etc. can be requested as a comma-
+separated string for interaction ablations.
 """
 
 from __future__ import annotations
@@ -30,11 +36,23 @@ def run_ablations(
     out_dir: str | Path | None = None,
     save_runs: bool = False,
     verbose: bool = True,
+    n_jobs: int = 1,
+    ablations: list[str] | None = None,
 ) -> dict:
     seeds = seeds if seeds is not None else list(range(7, 7 + cfg.n_seeds))
     out_dir = Path(out_dir) if out_dir else cfg.artifacts_dir() / "ablations"
     out_dir.mkdir(parents=True, exist_ok=True)
-    ablations = ["none", "no_ml", "no_debt", "no_credit", "no_budget"]
+    if ablations is None:
+        ablations = [
+            "none",
+            "no_ml",
+            "no_debt",
+            "no_credit",
+            "no_budget",
+            "no_uncertainty",
+            "no_interaction",
+            "fixed_score",
+        ]
     all_rows: dict = {}
     for abl in ablations:
         if verbose:
@@ -50,6 +68,7 @@ def run_ablations(
             out_dir=out_dir / abl,
             save_runs=save_runs,
             verbose=verbose,
+            n_jobs=n_jobs,
         )
         all_rows[abl] = res["aggregate"]["plens"]
     with open(out_dir / "ablation_summary.json", "w") as f:
