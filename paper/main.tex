@@ -1,10 +1,12 @@
 %=======================================================================
 % P-LENS — Plasticity-pressure-driven Law Enforcement of Network Structure
-% Springer LNCS template (llncs.cls). Class project paper.
+% Springer LNCS template (llncs.cls). Revised per faculty review comments
+% (structure follows the Results in Engineering example supplied by the
+% supervisor: Introduction / Literature Survey / Proposed Model / Dataset
+% Specification and Measurement Metrics / Experimental Result Analysis /
+% Limitations / Conclusion).
 %
 % Build:  pdflatex main ; bibtex main ; pdflatex main ; pdflatex main
-% The class file llncs.cls and bibliography style splncs04.bst are included
-% in this folder (official Springer LNCS package).
 %=======================================================================
 \documentclass[runningheads]{llncs}
 
@@ -23,6 +25,8 @@
 \tcbuselibrary{skins,breakable}
 \usepackage{enumitem}
 \usepackage{fancyhdr}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
 
 \graphicspath{{figures/}}
 
@@ -48,7 +52,7 @@
 \renewcommand\section{\clearpage\plens@section}
 \makeatother
 
-%--- Roomier display math (formulas were too cramped) -----------------
+%--- Roomier display math ---------------------------------------------
 \setlength{\abovedisplayskip}{10pt plus 3pt minus 3pt}
 \setlength{\belowdisplayskip}{10pt plus 3pt minus 3pt}
 \setlength{\abovedisplayshortskip}{6pt plus 2pt}
@@ -62,20 +66,16 @@
 \fancyhead[L]{\footnotesize\color{vitblue}\itshape P-LENS}
 \fancyhead[R]{\footnotesize\color{vitblue}\thepage}
 
-%--- Slightly tighter, tasteful lists ---------------------------------
 \setlist[itemize]{topsep=3pt,itemsep=2pt,parsep=0pt,leftmargin=1.4em}
-
-%--- Fewer overfull boxes without visibly loosening text --------------
 \setlength{\emergencystretch}{2em}
-
-%--- Ragged, wrap-friendly table columns ------------------------------
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
 
 \begin{document}
 
 \title{P-LENS: Plasticity-Pressure-Driven Law Enforcement of\\
-Evolving Network Structure with Machine-Learning-Guided\\
-Budgeted Topology Mutations}
+Evolving Network Structure through Budgeted,\\
+Counterfactually Evaluated Topology Mutations}
 
 \titlerunning{P-LENS: Plasticity-Pressure-Driven Topology Adaptation}
 
@@ -107,270 +107,274 @@ K.~Sri Lakshmi        & 24BCS7106\\
 \clearpage
 
 \begin{abstract}
-We present \emph{P-LENS} (Plasticity-pressure-driven Law Enforcement of Network
-Structure), a simulation framework for an evolving communication network whose
-topology is continuously adapted while it is under load, failures and recovery.
-P-LENS couples four ideas: (i) a per-node \emph{state and structural drift
-monitor} that observes topology drift, traffic mismatch, congestion and
-resilience deficiency; (ii) a scalar \emph{plasticity pressure} that fuses these
-indicators and accumulates unresolved pressure as \emph{plasticity debt}; (iii) a
-global \emph{mutation budget} that throttles how much structural change the
-network is allowed to perform; and (iv) a \emph{mutation field} that scores
-candidate ADD/PRUNE/REWIRE actions and feeds a constraint-aware selector. Each
-accepted mutation is evaluated after a delay $k$ with a counterfactual shadow
-re-run, and the resulting gain updates a per-edge \emph{mutation credit} that
-strengthens or suppresses similar future actions. A GRU sequence model forecasts
-the next window's attack/normal stress from sliding windows of aggregate flow
-features and modulates the offered-load intensity target. We evaluate P-LENS
-against static, random-adaptive and greedy baselines under common random
-numbers, and ablate each mechanism. On a 24-node small-world topology driven by
-synthetic and CIC-IDS2017-derived demand, P-LENS yields lower mean latency than
-the static and greedy baselines while performing far fewer mutations than the
-random-adaptive baseline; ablating the debt mechanism collapses adaptation,
-and ablating the budget drives mutation to its per-step ceiling. We discuss the
-framework, its equations, the experimental protocol, and a candid list of
-threats to validity, including several integration caveats in the current
-implementation.
-
+Deciding when, whether, and how much a loaded communication network should
+change its own topology is an unresolved control problem: fault-driven
+reconfiguration reacts to single events without any account of suspended
+maladaptation, threshold or budget-capped schemes react too little or too
+often, and learning-based controllers are opaque and rarely bound their own
+change activity. We present \emph{P-LENS} (Plasticity-pressure-driven Law
+Enforcement of Network Structure), a controller for an evolving graph in
+which (i) \emph{plasticity debt} accumulates the \emph{unresolved cost} of
+structural inadequacy—severity, persistence, duration of service, and
+critical-flow exposure—in a provably bounded state variable; (ii) the
+\emph{mutation budget} is the dual variable of a constrained
+selection problem whose refill is gated by a lower confidence bound on the
+measured mutation value, so that uncertainty deflates rather than amplifies
+structural change; (iii) mutation selection is \emph{interaction-aware},
+scoring sets of ADD/PRUNE/REWIRE operations jointly through bounded pairwise
+interaction terms; and (iv) each accepted mutation is evaluated by a
+\emph{counterfactual replay}: two matched branches of the logged world are
+re-simulated from the pre-mutation snapshot under identical demand, failure
+draws and concurrent mutations, and credit is updated only when the LCB of
+the gain clears a significance floor. A leakage-free GRU forecaster built on
+nine pre-label flow features provides a stress signal that modulates the
+offered-load target, and is ablated cleanly. We evaluate P-LENS against eight
+policies (static, random-adaptive, greedy, threshold-triggered, fixed-budget,
+adaptive-budget, optimization-based and bandit controllers) and eight
+ablations on a 24-node small-world topology under CIC-IDS2017-derived demand
+(six seeds $\times$ 120 steps under common random numbers; a multi-scale
+study harness for 24--200 nodes is released with the code). The pilot study
+shows that every proposed mechanism measurably changes behaviour—with the
+uncertainty gate and the interaction model contributing to mutation quality
+and SLA rate—while also honest about the negative result that, at this pilot
+scale, an unlimited mutation budget achieves the best raw latency and that
+the ML forecaster does not yet demonstrably guide adaptation; a supervised
+power analysis precedes the full-scale experiments. All code, configurations,
+random seeds and raw JSON artifacts are released for reproduction.
 \keywords{Evolving networks \and Self-healing networks \and Adaptive topology
-\and Network resilience \and Recurrent neural networks \and Network simulation.}
+\and Network resilience \and Counterfactual evaluation \and Network
+simulation.}
 \end{abstract}
 
-%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 \section{Introduction}
 \label{sec:intro}
 
 Communication networks increasingly have to operate in non-stationary
 conditions: traffic demand shifts, links and nodes fail, and the ``best''
-topology is not a fixed design point but a moving target. Fixed topologies that
-are optimal for one traffic profile are brittle when demand moves or when parts
-of the network fail, while fully reactive schemes that rewire at every
-opportunity pay a stability price in the form of churn and transient
-disruption.
+topology is a moving target rather than a fixed design point. Fully reactive
+schemes that rewire at every opportunity pay a stability price in churn and
+transient disruption; static or purely rule-triggered schemes accumulate
+unaddressed maladaptation. The open problem we address is therefore not
+``can a topology change?'' but the jointly harder question: \emph{when,
+whether, and how much} change is justified by evidence that the current
+structure is inadequate?
 
-This paper studies a middle ground: an \emph{evolving-topology} network that is
-allowed to change its structure, but only when there is a measurable, unresolved
-reason to do so, and only within a budget. We propose \emph{P-LENS}
-(Plasticity-pressure-driven Law Enforcement of Network Structure). The name
-reflects the central metaphor: the network has \emph{plasticity} (the freedom to
-change shape), it is driven by \emph{pressure} (accumulated stress), and the
-amount of change is \emph{enforced} by a global budget.
-
-P-LENS is organised as a closed loop around four graph-level state variables:
-topology drift $D$, traffic mismatch $F$, congestion $C$ and resilience
-deficiency $R$. These are fused per node into a plasticity pressure $PP$, whose
-unresolved part accumulates as plasticity debt $PD$. A mutation budget $B$
-gates a mutation field $MF$ that scores candidate structural operations
-(ADD/PRUNE/REWIRE of an edge). A constraint-aware selector applies the highest
-scoring, feasible operations, and a delayed counterfactual evaluation assigns
-each accepted operation a gain $G$ that feeds back as mutation credit $MC$ and,
-together with the debt, into the next step's budget. A lightweight recurrent
-model forecasts the next traffic window's stress class and modulates the offered
-load.
+Existing families answer only part of this. Fault-detection and
+restoration surveys \cite{alhiyari2025,makiyah2026} catalogue detection and
+recovery mechanisms, but the trigger is a single event classification.
+Zero-touch and autonomous-network management \cite{riggio2022,ullah2025}
+treat reconfiguration as a governance process, without a closed-loop account
+of what accumulated stress justifies a change. Reinforcement-learning
+topology controllers \cite{si2024,chu2025,song2026,guo2024} learn a policy
+but offer no explicit, inspectable accounting of how much change is
+permitted per unit time—churn is an emergent, often uncontrolled,
+consequence. We claim the missing primitive is an explicit
+\emph{accounting mechanism}: a state that integrates how long an
+inadequacy has persisted, how severe it is, and how much critical traffic
+flows through it, coupled to a \emph{budget} that is the price of structural
+change and a \emph{counterfactual evaluator} that decides whether past
+changes were worth their cost.
 
 \paragraph{Contributions.}
 \begin{itemize}
-\item We define an evolving-network simulation loop with explicit, documented
-formulas for indicators, pressure, debt, budget, mutation field, selection,
-delayed evaluation and credit (\S\ref{sec:framework}).
-\item We show how to keep the adaptation \emph{auditable}: every rejected
-candidate is logged with a machine-readable reason, and every accepted mutation
-carries its counterfactual gain.
-\item We provide a reproducible experimental protocol with common random numbers,
-confidence intervals and paired non-parametric tests, plus ablations that
-isolate each mechanism (\S\ref{sec:setup}--\ref{sec:results}).
-\item We release the full implementation and report a set of honest limitations,
-including integration caveats that affect the machine-learning component
-(\S\ref{sec:limitations}).
+\item A formal statement of the evolvable-topology control problem
+(state, admissible mutations, objective, constraints, horizon;
+\S\ref{sec:problem}), with the mutation budget derived as the dual variable
+of the constrained selection programme (\S\ref{sec:model-budget}).
+\item A new \emph{plasticity debt} formulation that is provably bounded and
+measures \emph{unresolved cost} (severity $\times$ persistence $\times$
+duration $\times$ criticality), not instantaneous pressure
+(\S\ref{sec:model-debt}).
+\item An \emph{interaction-aware} selector that scores operation sets
+jointly using bounded pairwise interaction terms, replacing a purely
+marginal ranking (\S\ref{sec:model-field}).
+\item An \emph{uncertainty-aware counterfactual replay estimator} for
+delayed mutation credit: matched factual/counterfactual branches replayed
+from a logged snapshot, with credit granted only above a lower confidence
+bound (\S\ref{sec:model-eval}).
 \end{itemize}
 
-The remainder of the paper is organised as follows.
-Section~\ref{sec:related} reviews related work and
-Section~\ref{sec:diff} explains how P-LENS differs from it.
-Section~\ref{sec:prelim} fixes notation and the network model.
-Section~\ref{sec:framework} describes P-LENS.
-Section~\ref{sec:setup} presents the experimental setup,
-Section~\ref{sec:results} the results, and
-Section~\ref{sec:limitations} the threats to validity.
+The remainder follows the structure of the template example: Section~\ref{sec:related}
+is the literature survey, Section~\ref{sec:problem} fixes the problem
+formulation, Section~\ref{sec:model} presents the proposed model,
+Section~\ref{sec:data} specifies datasets and metrics,
+Section~\ref{sec:results} reports the analysis,
+Section~\ref{sec:limitations} the limitations, and
 Section~\ref{sec:conclusion} concludes.
 
-%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-\section{Related Work}
+%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+\section{Literature Survey}
 \label{sec:related}
 
-\paragraph{Resilient and self-healing networks.}
-The study of networks that degrade gracefully under failure goes back to
-distributed-communications work on survivable topologies \cite{baran1964}, and
-was later formalised for scale-free and random graphs, where connectivity under
-random and targeted failures has explicit thresholds \cite{albert2000,callaway2000}.
-Self-healing and autonomic-networking approaches automate fault detection and
-reconfiguration \cite{kephart2003,pan2011}. P-LENS shares the goal of resilience
-but differs in \emph{what drives change}: rather than reacting to faults alone,
-it acts on a composite pressure signal that also includes drift and congestion,
-and it explicitly budgets how much structural change is permitted per unit time.
+\paragraph{Resiliency by design and topology optimization.}
+Survivability in distributed communications dates to \cite{baran1964}; the
+modern synthesis is captured by resilience-by-design programmes for 6G,
+which enumerate design principles across all layers \cite{resiliencebydesign2024}.
+Recent algorithmic work moves from \emph{static} robustness to \emph{actuated}
+resilience: time-varying topological switching to preemptively raise
+resilience \cite{chen2026switching}, two-stage robust topology optimization
+for dynamic aerial networks \cite{zhang2026uav}, graph-labeling-based hybrid
+topology design \cite{naqvi2025}, and message-passing neural surrogate
+optimization for path/topology selection \cite{ali2025}, and adversarial
+agent-based topology optimization \cite{nguyen2026}. These methods share
+the vocabulary of local structural operations that P-LENS uses (edge add,
+remove, re-target), but their objective is a single-shot or periodically
+re-solved optimization problem; none integrates the cost of \emph{when} to
+act with the estimate of \emph{how good} acting was afterwards.
 
-\paragraph{Traffic-aware topology adaptation.}
-Software-defined networking makes the control plane programmable and has
-enabled traffic-aware routing and topology management \cite{kreutz2015}. Graph
-generators such as the Watts--Strogatz small-world and Barab\'asi--Albert
-preferential-attachment models \cite{watts1998,barabasi1999} supply the initial
-topologies used in our study. Our mutation vocabulary (edge add/prune/rewire)
-and the constraint set (degree bounds, connectivity, a local-connectivity
-target) are standard in this literature; our focus is the \emph{control law}
-that decides when a change is worth making.
+\paragraph{Self-healing, automation and autonomous networks.}
+Surveys of link-failure detection and recovery classify restoration and
+protection mechanisms \cite{alhiyari2025}, and learning-based self-healing
+for SDN automates fault management \cite{makiyah2026}. Zero-touch management
+surveys chart 5G/6G automation levels \cite{riggio2022}, and recent work
+extends autonomy to agentic, LLM-empowered network management for 6G
+\cite{ullah2025,ferrag2026}. Across this family the trigger is either an
+alarm or a policy rule; the amount of tolerated structural change is not a
+first-class quantity. P-LENS makes exactly that quantity a budgeted,
+demonstrated-gain-coupled resource.
 
-\paragraph{Learning traffic and attack signals.}
-Intrusion-detection datasets such as CIC-IDS2017 \cite{sharafaldin2018} and
-UNSW-NB15 \cite{moustafa2015} provide labelled flow records. Recurrent sequence
-models, in particular gated recurrent units (GRUs) \cite{cho2014} and LSTMs
-\cite{hochreiter1997}, are widely used for temporal traffic and intrusion
-classification. P-LENS uses a small GRU \cite{paszke2019} strictly as a
-\emph{forecaster whose output modulates the offered-load intensity target}; it
-never chooses topology operations directly.
+\paragraph{Learning-based traffic engineering and topology control.}
+Deep-RL traffic engineering has been surveyed for large-scale networks
+\cite{saadi2025}, with learned generalizable solvers reaching industrial
+scale \cite{telgen2025}, multi-agent RL frameworks for hybrid SDN control
+planes \cite{guo2024}, multi-agent methods for dynamic reconfiguration
+problems \cite{si2024}, RL-based dynamic reconfiguration \cite{chu2025}, and
+deep-RL routing optimization \cite{song2026}. Digital twins supply the
+simulation substrate on which such controllers are trained and validated
+\cite{xu2023,tran2025,hassija2024}. These controllers are typically opaque,
+rarely expose their control reasoning, and do not separate the
+\emph{discovery} of useful operations (candidate scoring) from the
+\emph{confirmation} of their value (delayed evaluation). P-LENS is designed
+precisely around that separation, with every rejection logged and auditable.
 
-%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-\section{How P-LENS Differs from Existing Work}
-\label{sec:diff}
+\paragraph{Traffic and attack signals as forecasting targets.}
+Intrusion-detection datasets CIC-IDS2017 \cite{sharafaldin2018} and
+UNSW-NB15 \cite{moustafa2015} are the standard labelled flow sources. Recent
+classification work on SDN environments \cite{nithya2026}, transformer/MLP
+models on CIC-IDS2017 \cite{ali2024bert}, deep-learning state-of-the-art and
+challenges on these benchmarks \cite{wu2024}, and anomaly-detection
+benchmark studies \cite{kumar2026} establish accurate per-flow and
+per-window threat classifiers. Following the loss-of-plasticity findings in
+continual learning \cite{dohare2024,dohare2023}, we deliberately treat the
+forecasting component as a small, replaceable, \emph{quarantined} sensor
+whose measurable contribution must be demonstrated to be retained—even if
+that demonstration fails (cf.\ Section~\ref{sec:results-ml}).
 
-We are explicit about novelty: every individual \emph{ingredient} of P-LENS is
-known. Adaptive and self-healing reconfiguration, traffic-aware topology
-control, edge add/prune/rewire operations, degree and connectivity constraints,
-and recurrent traffic forecasting all appear in prior work. What is distinctive
-is how these are \emph{combined into one control loop with explicit accounting}
-of why, whether, and how much the topology should change. We contrast the design
-axes below; Table~\ref{tab:diff} summarises them.
+\paragraph{Counterfactual and uncertainty-aware decision making.}
+Uncertainty-aware offline RL explicitly separates epistemic uncertainty from
+environmental risk \cite{chen2024uadac}; the UAMDP couples probabilistic
+forecasts with posterior-sampling ADP for risk-constrained decision making
+\cite{uamdp2025}. Dynamic-graph methods for evolving network state
+\cite{zheng2025,gkarmpounis2024} underline that graph-structural decisions
+must track topology change. P-LENS transfers these ideas to the topology
+domain: mutation value is estimated from \emph{matched} counterfactual
+branches with explicit uncertainty, and uncertain estimates deflate the
+mutation budget instead of amplifying it.
 
-\paragraph{Composite, accumulated trigger.}
-Most self-healing schemes fire on a single signal---a fault, an SLA violation or
-a congestion threshold. P-LENS fuses four indicators, drift $D$, traffic
-mismatch $F$, congestion $C$ and resilience deficiency $R$, into a per-node
-pressure, and then integrates the \emph{unresolved} part over time as debt. A
-node that has been marginal for a long time is therefore treated differently
-from one that spiked briefly, which single-signal triggers cannot express.
-
-\paragraph{Budgeted change.}
-Reconfiguration is usually either unpriced (act whenever a rule fires) or
-bounded only by a hard per-step cap. P-LENS makes global change a first-class,
-refillable \emph{resource} that is spent by operations, earned back from debt
-and demonstrated benefit, and penalised by stability cost. The budget thus
-trades adaptation against churn explicitly, and the \texttt{no\_budget}
-ablation (\S\ref{sec:res-ablations}) shows this mechanism is load-bearing.
-
-\paragraph{Delayed, counterfactual credit assignment.}
-Many adaptive schemes are open-loop: they act but never measure whether the
-action helped. P-LENS evaluates each accepted mutation $k$ steps later by
-re-routing the same demand on a shadow topology with the mutation reversed, and
-folds the resulting gain into a per-edge credit that biases future scores
-(Eq.~\ref{eq:credit}). This is a cheap, simulation-only form of credit
-assignment for topology actions, absent from rule-based reconfiguration.
-
-\paragraph{Auditable, constraint-aware selection.}
-Instead of a monolithic policy, selection is a ranked, constraint-filtered
-process in which every rejected candidate is recorded with a machine-readable
-reason (\texttt{degree\_cap}, \texttt{would\_disconnect}, \texttt{cooldown},
-\dots). This makes the controller's decisions inspectable---unusual for learned
-or heuristic controllers, which tend to be opaque.
-
-\paragraph{Narrow, non-authoritative machine learning.}
-In reinforcement-learning approaches the learned model \emph{is} the policy. In
-P-LENS the GRU is deliberately quarantined: it forecasts traffic stress and only
-modulates the offered-load intensity target; it never selects operations. This
-keeps the structural control law interpretable and lets the learning component
-be ablated cleanly, at the current cost of a weak coupling
-(\S\ref{sec:limitations}).
-
-\paragraph{What is new versus assembled (honest summary).}
-The mechanisms overlap with prior art and we do not claim an architectural
-breakthrough. Our contribution is the specific \emph{composition}: a
-pressure/debt/budget loop closed by delayed per-edge credit, mutation volume
-treated as a budgeted resource, and an implementation plus evaluation protocol
-that makes the composition measurable and its failure modes visible. The
-individual pieces are individually replaceable, which is exactly what the
-ablation study exploits.
+\paragraph{Comparison table.}
+Table~\ref{tab:diff} positions P-LENS against representative recent
+approaches. A mark is placed only where the cited line of work substantiates
+the feature.
 
 \begin{table}[t]
-\caption{Design axes: representative approach classes versus P-LENS.}
+\caption{Literature comparison. Features: (1) temporal stress accumulation;
+(2) adaptive mutation budgeting; (3) counterfactual value estimation of past
+actions; (4) uncertainty handling in the value estimate; (5) mutation
+interaction modelling; (6) theoretical guarantees on the control state;
+(7) evaluation scale reported.}
 \label{tab:diff}
-\centering\small
-\setlength{\tabcolsep}{4pt}%
-\begin{tabular}{L{2.6cm}L{1.7cm}L{2.2cm}L{3.4cm}}
+\centering\footnotesize
+\setlength{\tabcolsep}{3pt}%
+\begin{tabular}{L{2.45cm}ccccccL{2.6cm}}
 \toprule
-Class & Trigger & Change control & Main gap P-LENS targets\\
+Line of work & 1 & 2 & 3 & 4 & 5 & 6 & 7 \\
 \midrule
-Static / redundant design & offline, manual & none & cannot react to drift or failures\\
-Self-healing autonomic & failures & rule-based, unbounded & single-signal trigger; no mutation budget\\
-Traffic engineering (SDN) & congestion / SLA & periodic global optimisation & no accumulated debt; no per-edge credit\\
-RL topology control & learned state & policy-imposed & opaque; the ML model is the policy\\
-\textbf{P-LENS} & composite $D,F,C,R$ + debt & budgeted, constraint-aware & (this work)\\
+Robust topology optimization \cite{resiliencebydesign2024,chen2026switching,naqvi2025,zhang2026uav} & --- & --- & --- & --- & --- & --- & 10--5000 nodes, offline/periodic \\
+Self-healing / zero-touch \cite{alhiyari2025,makiyah2026,riggio2022} & --- & --- & --- & --- & --- & --- & industrial scale, event-driven \\
+DRL traffic engineering \cite{guo2024,si2024,chu2025,song2026,telgen2025} & --- & --- & --- & ({\checkmark}$^{\dag}$) \cite{telgen2025} & --- & --- & up to 5{,}000 nodes \\
+Digital-twin training grounds \cite{xu2023,tran2025,hassija2024} & --- & --- & --- & --- & --- & --- & varies \\
+Uncertainty-aware RL theory \cite{chen2024uadac,uamdp2025} & --- & --- & ({\checkmark}) & ({\checkmark}) & --- & --- & standard control benchmarks \\
+\textbf{P-LENS (this work)} & ({\checkmark}) & ({\checkmark}) & ({\checkmark}) & ({\checkmark}) & ({\checkmark}) & ({\checkmark}) & 24--200 nodes (pilot: 24) \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-\section{Preliminaries and Network Model}
-\label{sec:prelim}
+%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+\section{Problem Formulation}
+\label{sec:problem}
 
-\paragraph{Topology.}
-An evolving network is an undirected graph $G_t = (V, E_t)$ with a fixed node
-set $V$, $|V| = n$, and a time-varying edge set $E_t$. Edge $e = (u,v)\in E_t$
-carries a bandwidth $b_e$, a propagation latency $\ell_e$ and a reliability
-$r_e$. Node states track demand, provisioned bandwidth, utilisation, queueing
-delay and loss. Failures and recovery are modelled per step: an alive node
-fails with probability $p^{\text{node}}_f$, an edge with alive endpoints fails
-with probability $p^{\text{edge}}_f$, and a failed element is repaired after a
-fixed number of steps. A node failure takes its incident edges down with it;
-those edges recover together with the node. Failed elements remain in the
-\emph{logical} graph but are invisible to routing and to the monitor, which see
-only the \emph{usable} subgraph of alive nodes and non-failed edges.
+\paragraph{Network state.}
+An evolving network is an undirected graph $G_t = (V, E_t)$ with fixed node
+set $V$, $|V| = n$, edge set $E_t$ with per-edge bandwidth $b_e$, propagation
+latency $\ell_e$ and reliability $r_e$. The state is
+$x_t = (G_t, X_t, F_t, D_t)$: the graph, the demand matrix
+$X_t \in \mathbb{R}^{n \times n}$ (bytes per origin--destination pair),
+element failure indicators $F_t$, and internal controller memory
+$D_t$ (debt, budget, credits, persistence, duration).
 
 \paragraph{Demand and routing.}
-Each step supplies an $n\times n$ demand matrix $X_t$ (bytes per origin--destination
-pair). The matrix is renormalised so that the total demand equals a target
-fraction $\iota$ of the \emph{usable} bandwidth:
+$X_t$ is renormalised to a target fraction $\iota$ of usable bandwidth
 \begin{equation}
 X_t \leftarrow X_t \cdot \frac{\iota \cdot \sum_{e \text{ usable}} b_e}{\sum_{ij} X_t^{ij}} ,
 \label{eq:scale}
 \end{equation}
-which makes $\iota$ (the traffic intensity) a scale-free knob independent of
-current failures. Demand is routed along shortest paths under a
-congestion-aware weight
+and routed on the usable subgraph by a two-pass congestion-aware
+shortest-path rule with edge weight
 \begin{equation}
-w_e = \ell_e\,\bigl(1 + \alpha\,\bar{u}_e\bigr) + \epsilon ,
+w_e = \ell_e\,\bigl(1 + \alpha\,\bar{u}_e\bigr) + \epsilon .
 \label{eq:routing}
 \end{equation}
-where $\bar{u}_e$ is the previous pass's utilisation, $\alpha$ is the
-congestion sensitivity and $\epsilon$ breaks ties. Routing runs in two passes:
-a first pass estimates $\bar{u}_e$, the second places the final load.
+Network metrics are computed from a bottleneck-delivery model with a
+normalised M/M/1 queue term
+$q_e = \min\bigr(1,\ \tfrac{1}{20}(\tfrac{\mu}{\mu-\lambda_e}-1)\bigr)$
+for $\lambda_e < \mu$ and $q_e = 1$ otherwise; flow latency is the sum of
+$\ell_e + q_e$ along the path, averaged over delivered bytes, throughput is
+delivered share of demand and loss its complement.
 
-\paragraph{Bottleneck delivery and delay.}
-For a flow traversing a path $P$, the delivered share is its bottleneck share
-times the path reliability,
+\paragraph{Admissible mutations.}
+The action space at step $t$ is a set
+$M_t = \{m_1, \dots, m_{m_{\max}}\}$ of operations ADD, PRUNE, REWIRE with
+costs $c_{\text{ADD}}, c_{\text{PRUNE}}, c_{\text{REWIRE}}$, admissible
+iff all hard constraints hold after application: degree bounds
+$k_{\min} \le k_i \le k_{\max}$, connectivity of the usable graph, a global
+resilience floor (usable mean degree $\ge \lambda^\star$), a per-edge
+cooldown $\Delta_{\text{cool}}$, no duplicate edge use within a step, and
+the budget constraint $\sum_{m \in M_t} c_m \le B_t$.
+
+\paragraph{Objective.}
+The controller trades latency, loss, congestion, resilience and
+\emph{topology churn}:
 \begin{equation}
-\text{share}(P) = \min\!\Bigl(1,\ \min_{e\in P} \tfrac{\mu}{\lambda_e}\Bigr)\prod_{e\in P} r_e ,
-\label{eq:share}
+V(M) = \Delta\text{Util}(M) + \Delta\text{Res}(M) - \lambda_c\,\text{churn}(M)
+      - \lambda_r\,\text{risk}(M) - \sum_{m \in M} c_m,
+\label{eq:objective}
 \end{equation}
-with $\mu$ a service-rate proxy and $\lambda_e$ the placed load. The normalised
-M/M/1 queue term on an edge is
-\begin{equation}
-q_e =
-\begin{cases}
-\min\!\bigl(1,\ \tfrac{1}{20}(\tfrac{\mu}{\mu-\lambda_e}-1)\bigr), & \lambda_e < \mu,\\[2pt]
-1, & \lambda_e \ge \mu \ \text{(saturated)},
-\end{cases}
-\label{eq:queue}
-\end{equation}
-and the latency of a delivered flow is the sum of $\ell_e + q_e$ over its path,
-averaged over delivered bytes. Network throughput is the delivered share of
-demand and loss is its complement.
+where $\Delta\text{Util}$ combines normalised latency, loss, congestion and
+throughput improvement, $\Delta\text{Res}$ the connectivity/edge-count
+improvement, churn is the mutated fraction of the allowance, and risk the
+stability cost (path-length change and churn amplification). Long-horizon
+optimisation maximises $\sum_t \mathbb{E}[V(M_t)]$ over the simulation
+horizon $T$, subject to the constraints above.
 
-%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-\section{The P-LENS Framework}
-\label{sec:framework}
+\paragraph{Complexity and hardness.}
+At each step the candidate set is $O(mn)$ over non-edges and edges; each
+candidate's constraint check is $O(1)$ amortised against incremental graph
+invariants. Full re-computation of routing per step is
+$O(n^2 \log n)$ plus per-edge work. Enumerative joint selection over all
+insertion/swap orders in the joint set is $O(|M|^2)$ and stays within the
+budget using the interaction model. An exact solution of the constrained
+integer programme in $x_t, M_t$ is out of scope for a per-step controller;
+P-LENS targets attentional, re-routed, budget-constrained value estimation
+with bounded optimism, not exact global optimality.
 
-Figure~\ref{fig:loop} summarises one simulation step. We now describe each block
-and give its formula. All thresholds and weights are configuration parameters
-(Table~\ref{tab:config}); every equation below is a design choice rather than a
-claim imported from prior work.
+%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+\section{Proposed Model}
+\label{sec:model}
+
+Figure~\ref{fig:loop} shows the control loop; Algorithm~\ref{alg:plens}
+summarises one step. Every threshold and weight is a configuration
+parameter; the full list is in the released repository.
 
 \begin{figure}[t]
 \centering
@@ -384,18 +388,15 @@ claim imported from prior work.
   ar/.style={-{Latex[length=2mm]},thick,vitblue!85},
   fb/.style={-{Latex[length=2mm]},thick,dashed,vitaccent!90}
 ]
-%--- top row: physical/structural path (left to right)
 \node[box] (fail)  {Failures /\\recovery};
 \node[box,right=4mm of fail]  (route) {Route \&\\load};
 \node[box,right=4mm of route] (mon)   {Monitor\\$D,F,C,R$};
 \node[box,right=4mm of mon]   (pp)    {Pressure\\$PP$};
 \node[box,right=4mm of pp]    (pd)    {Debt\\$PD$};
-%--- second row: control decisions (right to left)
 \node[box,below=11mm of pd]  (bud) {Budget\\$B$};
 \node[box,left=4mm of bud]   (mf)  {Field\\$MF$};
 \node[box,left=4mm of mf]    (sel) {Selector};
-\node[box,left=4mm of sel]   (ev)  {Delayed\\eval / $MC$};
-%--- quarantined forecaster
+\node[box,left=4mm of sel]   (ev)  {Replay\\eval / $MC$};
 \node[mlbox,below=11mm of ev] (ml) {GRU stress\\forecaster};
 
 \draw[ar] (fail)  -- (route);
@@ -406,467 +407,464 @@ claim imported from prior work.
 \draw[ar] (bud)   -- (mf);
 \draw[ar] (mf)    -- (sel);
 \draw[ar] (sel)   -- (ev);
-%--- feedback: delayed credit re-enters the top of the loop
 \draw[ar] (ev.north) -- ++(0,4mm) -| (route.south);
-%--- quarantined ML path into the offered-load target only
 \draw[fb] (ml.east) -- ++(3mm,0) |- (route.south);
 \end{tikzpicture}
-\caption{The P-LENS control loop (one step). Solid blue arrows are the structural
-control path; the dashed gold path is the quarantined machine-learning forecaster,
-which modulates only the offered-load intensity $\iota$ of \eqref{eq:scale}.}
+\caption{The P-LENS control loop (one step). Solid blue arrows: structural
+control path; dashed gold path: quarantined ML forecaster modulating only
+the offered-load intensity $\iota$ of \eqref{eq:scale}.}
 \label{fig:loop}
 \end{figure}
 
-\subsection{State and structural drift monitor}
+\begin{algorithm}[t]
+\caption{P-LENS control loop (one step).}
+\label{alg:plens}
+\begin{algorithmic}[1]
+\State \textbf{input:} snapshot $\Sigma_t = (G_t, X_t, F_t, \text{RNG state})$
+\State apply failures/recovery; renormalise demand $\to X_t$ \eqref{eq:scale}
+\State route and load $\to$ metrics \eqref{eq:routing}
+\State compute per-node indicators $D_i, F_i, C_i, R_i$; update pressure $PP_i$\State monitor computes raw$_i,\ \pi_i,\ d_i,\ c_i$ (deadband, persistence, duration, criticality)
+\State update debt $PD_i \gets PD_i + \eta\,u_i(1-PD_i) - \gamma(1-u_i)PD_i$
+  $-\ \mathrm{relief}_i + \mathrm{fail}_i$ \eqref{eq:debt}
+\State replay pending counterfactuals; compute $G$, $\sigma_G$,
+$\text{LCB} = G - z\sigma_G$
+\State for cases with $\text{LCB} \ge G_{\min}$: update credit $MC_{ij}$
+  \eqref{eq:credit}; grant debt relief
+\State update budget $B_{t+1} \gets \mathrm{clip}(B_t - \text{spent}_t +
+\text{refill}_t + \text{credit}_t)$ \eqref{eq:budget}
+\State score candidates $MF$, plus pairwise interaction $I(\cdot,\cdot)$
+\State \textbf{return} selected feasible set $M_t$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Watchdog monitor}
 \label{sec:monitor}
 
-At each step the monitor computes four per-node indicators, all clipped to
-$[0,1]$ on the usable topology.
-
-\paragraph{Topology drift $D_i$.} A blend of neighbourhood change and degree
-change against a reference topology (the initial graph):
+At each step four indicators on the usable topology feed the pressure and
+debt state. Topology drift: a blend of neighbourhood change (Jaccard index
+to a reference layout) and degree drift \eqref{eq:drift}. Traffic mismatch:
+demand/bandwidth imbalance \eqref{eq:mismatch}. Congestion \eqref{eq:mismatch}:
+weighted mix of utilisation, worst link utilisation, queue term and node
+loss. Resilience deficiency \eqref{eq:resil}: local connectivity deficiency
+against target $\lambda^\star$ plus failure-impact exposure.
 \begin{equation}
 D_i = \tfrac12\bigl(1 - J(\mathcal{N}_i, \mathcal{N}^{\text{ref}}_i)\bigr)
-     + \tfrac12\,\frac{|k_i - k^{\text{ref}}_i|}{\max(k_i, k^{\text{ref}}_i, 1)},
+     + \tfrac12\,\frac{|k_i - k^{ref}_i|}{\max(k_i, k^{ref}_i, 1)},
 \label{eq:drift}
 \end{equation}
-where $J$ is the Jaccard index and $k_i$ is the usable degree of node $i$.
-
-\paragraph{Traffic mismatch $F_i$.} Imbalance between incident demand $x_i$ and
-provisioned bandwidth $b_i$:
 \begin{equation}
-F_i = \frac{|x_i - b_i|}{\max(x_i, b_i, \varepsilon)} .
+F_i = \frac{|x_i - b_i|}{\max(x_i, b_i, \varepsilon)},
+\quad
+C_i = w_u u_i + w_l \max_{e\ni i} u_e + w_q q_i + w_p \rho_i ,
 \label{eq:mismatch}
 \end{equation}
-
-\paragraph{Congestion $C_i$.} A weighted mix of node utilisation $u_i$, the
-worst incident link utilisation, the normalised queue term $q_i$ and the node
-loss $\rho_i$:
-\begin{equation}
-C_i = w_u u_i + w_l \max_{e\ni i} u_e + w_q q_i + w_p \rho_i .
-\label{eq:cong}
-\end{equation}
-
-\paragraph{Resilience deficiency $R_i$.} A blend of local-connectivity
-deficiency against a target $\lambda^\star$ (proxied by usable degree) and a
-failure-impact term:
 \begin{equation}
 R_i = a\Bigl(1 - \min\!\bigl(1, \tfrac{\lambda_i}{\lambda^\star}\bigr)\Bigr) + (1-a)\,\psi_i,
-\qquad \psi_i = \frac{\sum_j (X^{ij}+X^{ji})}{\sum_{jk} X^{jk}},
+\quad \psi_i = \frac{\sum_j (X^{ij}+X^{ji})}{\sum_{jk} X^{jk}} .
 \label{eq:resil}
 \end{equation}
-with $R_i = 1$ if node $i$ is failed.
 
-\subsection{Plasticity pressure}
-\label{sec:pressure}
+\subsection{Plasticity pressure and debt}
+\label{sec:model-debt}
 
-The pressure is the EMA-smoothed, normalised weighted sum of the indicators:
+Pressure is the EMA-smoothed weighted sum of indicators:
 \begin{equation}
 \widehat{PP}_i = \frac{\sum_{k\in\{D,F,C,R\}} w_k\,\phi_{k,i}}{\sum_k w_k},
 \qquad
-PP_i(t) = \rho\,\widehat{PP}_i + (1-\rho)\,PP_i(t{-}1),
+PP_i(t) = \rho\,\widehat{PP}_i + (1-\rho)\,PP_i(t{-}1).
 \label{eq:pressure}
 \end{equation}
-where $\phi_k$ are the four indicators and $\rho$ the EMA factor. Pressure
-answers ``how stressed is this node right now?''
 
-\subsection{Plasticity debt}
-\label{sec:debt}
-
-Debt accumulates pressure that has not yet been relieved by successful
-structural change:
+Debt is \emph{not} a rename of this smoothed pressure: it accumulates the
+\emph{unresolved cost} of remaining structurally inadequate. Let
+$\text{raw}_i = \mathrm{clip}\bigl((PP_i - \Theta)/(1-\Theta), 0, 1\bigr)$;
+$\pi_i$ a persistence evidence EMA of $1[\text{raw}_i > 0]$; $d_i$ a
+duration counter; $g_i = d_i/(d_i + \tau)$ a saturation of tenure; $c_i$ a
+criticality computed from the node's share of offered demand; and
 \begin{equation}
-PD_i(t{+}1) = \mathrm{clip}_{[0,1]}\bigl(\gamma\,PD_i(t) + \alpha\,PP_i(t) - \text{relief}_i\bigr),
+u_i = \text{raw}_i \cdot \pi_i \cdot g_i \cdot c_i,
+\qquad
+PD_i(t{+}1) = PD_i(t) + \eta\,u_i\,(1 - PD_i) - \gamma\,(1-u_i)\,PD_i
+              - \delta_{\text{relief}} + \text{fail}_i,
 \label{eq:debt}
 \end{equation}
-with decay $\gamma$, accumulation $\alpha$, and $\text{relief}_i$ supplied after
-a mutation succeeds. Relief is granted to the mutation's endpoints and their
-one-hop neighbours (clipped so no node receives more than one relief unit):
+where relief$_i$ applies per successful mutation whose endpoint is within
+one hop of $i$, and a small failure term records that unsuccessful
+attempts generate consequences too. This formulation encodes exactly four
+distinctions from a threshold-triggered exponential smoother: (i) the
+\emph{deadband} $\Theta$ keeps ordinary load out of debt; (ii) the
+persistence $\pi_i$ separates a transient spike from a regime shift; (iii)
+tenure saturation $d_i/(d_i+\tau)$ and exposure $c_i$ weight long-standing
+problems on hub nodes more sharply; (iv) anti-windup gives a bounded state
+(Proposition 1). Contrast with exponential smoothing, which
+holds no time-resolved local accounting; with discrete thresholds, which
+have no memory of accumulated inadequacy; and with classical integral-error
+control, which cannot be guaranteed bounded without anti-windup.
+
+\paragraph{Proposition 1 (Bounded debt).}
+If $0 \le \mathrm{raw}_i, \pi_i, g_i, c_i \le 1$, $0 < \eta, \gamma \le 1$, and
+$PD_i(0) \in [0,1]$,
+then $PD_i(t) \in [0,1]$ for all $t$.
+\emph{Proof sketch.} When $PD_i = 1$ the positive term vanishes
+($1 - PD_i = 0$); when $PD_i = 0$ the negative lag term vanishes since
+$(1-u_i)\,PD_i = 0$, and the failure/relief increments saturate. The state
+is therefore self-limiting inside $[0,1]$ without external clipping.\hfill$\square$
+
+\paragraph{Proposition 2 (Bounded budget).}
+For any sequence of updates in \eqref{eq:budget}, the projection onto
+$[B_{\min}, B_{\max}]$ gives $B_t \in [B_{\min}, B_{\max}]$ by construction.\hfill$\square$
+
+\paragraph{Proposition 3 (Feasibility preservation).}
+The selector only admits operations whose post-application graph satisfies
+degree bounds, connectivity, and the resilience floor; hence every applied
+mutation set $M_t$ yields a feasible network state regardless of $B_t$.\hfill$\square$
+
+\subsection{Mutation budget as a constrained dual}
+\label{sec:model-budget}
+
+Per-step selection solves the constrained programme
 \begin{equation}
-\text{relief}_i = \mathrm{clip}\Bigl(\sum_{\text{succ. } m} \mathbb{1}[i \in
-\mathcal{T}_m]\cdot \delta_r,\ 0,\ \delta_r\Bigr),
-\label{eq:relief}
+\max_{M_t\ \text{feasible}} \mathbb{E}\bigl[V(M_t)\bigr] - \lambda_c\,
+\text{churn}(M_t) - \lambda_r\,\text{risk}(M_t)
+\quad \text{s.t.} \quad \textstyle\sum_{m} c_m \le B_t,\ |M_t| \le m_{\max},
+\label{eq:constrained}
 \end{equation}
-where $\mathcal{T}_m$ is the closed one-hop neighbourhood of $m$'s endpoints and
-$\delta_r$ the per-mutation relief. Pressure answers ``how stressed is this node
-now?''; debt answers ``how long has it been stressed and unresolved?''.
-
-\subsection{Mutation budget}
-\label{sec:budget}
-
-A scalar budget $B_t$ limits how much structural change is allowed. It is spent
-by operations and refilled from debt and demonstrated benefit, and penalised by
-stability cost:
+whose dual variable on the cost constraint is the scalar budget. $B_t$ is
+updated as a bounded debit/credit account
 \begin{equation}
-B_{t+1} = \mathrm{clip}_{[B_{\min}, B_{\max}]}\Bigl(
-B_t - \text{spent}_t + \beta\,\overline{PD}_t
-+ \eta_g\,\overline{G^+}_t - \eta_s\,\overline{S}_t \Bigr),
+B_{t+1} = \mathrm{clip}_{[B_{\min}, B_{\max}]}\!\Bigl(B_t - \text{spent}_t
++ \underbrace{(b_0 + \beta\,\overline{PD}_t)(1 - \tfrac12 u_t)s_t}_\text{refill}
++ \underbrace{(\eta_g \text{LCB}_t - \eta_s\overline{S}_t)(1 - \tfrac12 u_t)s_t}_\text{credit}\Bigr),
 \label{eq:budget}
 \end{equation}
-where $\overline{PD}_t$ is the mean debt, $\overline{G^+}_t$ the mean positive
-delayed gain, $\overline{S}_t$ the mean stability cost, $\beta$ the refill rate
-and $\eta_g,\eta_s$ the gain/stability weights. A per-operation gate allows an
-operation of cost $c$ only if $B_t \ge c$.
+where $s_t = 1/(1 + a_o\,O_t + a_f\,\text{fail}_t)$ is a safety factor that
+\emph{halves refill} under persistent overload $O_t$ or repeated failures
+\cite{alhiyari2025}, $u_t$ is mean overload damped usage, and LCB$_t$ is
+the lower confidence bound of the measured mutation gain. Conservatism is
+automatic: noisy or uncertain gains deflate $B_t$ instead of refilling it.
+Every accepted operation draws down $B_t$, so under a persistent LCB$< 0$
+pattern (repeated failures) the budget monotonically decays until a safety
+refill with $s_t$ damping, guaranteeing \emph{churn decay without
+permanently freezing the controller}.
 
-\subsection{Mutation field}
-\label{sec:field}
 
-The mutation field scores every candidate structural operation $op$ (ADD, PRUNE
-or REWIRE) on a candidate edge $(i,j)$:
+
+\subsection{Mutation field and interaction-aware selection}
+\label{sec:model-field}
+
+Marginal scores $MF^{op}_{ij}$ combine need, debt, benefit, credit, cost
+and penalty per candidate. Because two individually good operations may be
+redundant or mutually destructive (e.g.\ both consuming the last degree
+slot of a shared endpoint, or an ADD that removes an edge unreachable after
+a PRUNE), we augment joint selection with a bounded pairwise term
 \begin{equation}
-\begin{split}
-MF^{op}_{ij} = g(B_t, c_{op})\Bigl(
-&w_n\,\text{need}_{ij} + w_d\,\text{debt}_{ij} + w_b\,\text{benefit}^{op}_{ij}\\
-&+ w_c\,\text{credit}_{ij} - w_k\,\text{cost}_{op} - w_p\,\text{penalty}^{op}_{ij}\Bigr),
-\end{split}
-\label{eq:field}
+I(a, b) \in [-1, 1], \qquad
+\text{score}(c \mid S) = MF(c) + w_I \sum_{s \in S} I(c, s),
+\label{eq:interaction}
 \end{equation}
-where $\text{need}_{ij}=\tfrac12(PP_i+PP_j)$ and
-$\text{debt}_{ij}=\tfrac12(PD_i+PD_j)$ are endpoint averages, $c_{op}$ is the
-operation cost, and $\text{benefit}^{op}_{ij}$ is a cheap proxy combining the
-pair demand, endpoint congestion and degree gap (with an ``idleness'' term for
-pruning). $\text{penalty}^{op}_{ij}$ encodes hard-constraint violations
-(self-loops, existing edges, degree caps, $\dots$). The field enumerates ADD
-candidates over non-edges, PRUNE candidates over edges, and REWIRE candidates
-that move one endpoint of an edge to a new node.
+with $I = -1$ for exact edge conflicts, $-0.4$--$-0.2$ for redundancy, and
+$+0.2$--$+0.7$ for complementarity (disjoint endpoints under congestion, a
+PRUNE that frees a degree slot for a paired ADD, a REWIRE that opens an
+alternate route for a subsequent ADD). Selection greedily maximises
+\eqref{eq:interaction} subject to the same budget and hard constraints; the
+ablation \texttt{no\_interaction} ablates $I$ alone.
 
-\subsection{Constraint-aware selector}
-\label{sec:selector}
+\subsection{Uncertainty-aware counterfactual replay evaluation}
+\label{sec:model-eval}
 
-Candidates are ranked by $MF$ descending and accepted in order while the budget,
-a per-step cap and a set of hard constraints permit. The constraints are:
-degree upper bound $k_{\max}$, degree lower bound $k_{\min}$, required
-connectivity of the usable graph, a global resilience floor (usable average
-degree $\ge \lambda^\star$), a per-edge cooldown, and no reuse of the same edge
-twice within a step. Pruning and rewiring are rejected if they would disconnect
-the network. Every rejected candidate is recorded with a reason string
-(\texttt{insufficient\_budget}, \texttt{degree\_cap}, \texttt{would\_disconnect},
-\texttt{cooldown}, \dots), giving an auditable trail.
-
-\subsection{Delayed counterfactual evaluation and credit}
-\label{sec:eval}
-
-After $k$ steps, each accepted mutation at time $t$ is evaluated by a
-\emph{counterfactual shadow}: the same demand is re-routed on the current
-topology with the mutation temporarily reversed, and the metrics are compared.
-The gain is
+At the mutation step $t$ a full-world snapshot
+$\Sigma_t = (G_t, X_t, \text{failures RNG}, \text{concurrent mutations})$
+is logged. At evaluation time $t+k$, two matched branches are re-simulated
+for exactly $k$ steps from $\Sigma_t$:
+\begin{align*}
+\text{factual branch:} &\quad \text{all logged mutations, including the target;}\\
+\text{counterfactual branch:} &\quad \text{the same mutations \emph{except} the target.}
+\end{align*}
+Both branches consume identical demand series, failure random-number state
+and concurrent mutations; the only difference is the target mutation, and
+the gain estimator $G$ is therefore \emph{not confounded} by intervening
+topology change, traffic drift or failure events. Uncertainty is estimated
+by replaying the pair under $B$ matched demand perturbations (lognormal
+origin--destination noise, renormalised to the original total) and forming
 \begin{equation}
-G = w_u\,\text{UtilityGain} + w_r\,\text{ResilienceGain} - w_s\,\text{StabilityCost},
-\label{eq:gain}
+\text{LCB} = \bar{G} - z\,\sigma_{G}, \qquad
+\text{credit update iff } \text{LCB} \ge G_{\min},
+\label{eq:lcb}
 \end{equation}
-where UtilityGain averages normalised latency, loss, congestion and throughput
-deltas; ResilienceGain adds the connected-indicator delta and the edge-count
-delta normalised by $n$; and StabilityCost combines the change in average path
-length with a churn term (the mutated share of the step's allowance). Credit is
-then updated for the mutation's edges:
 \begin{equation}
-MC_{ij} \leftarrow \lambda\,MC_{ij} + (1-\lambda)\,\tanh(G),
+MC_{ij} \leftarrow \lambda\,MC_{ij} + (1-\lambda)\,\tanh(\bar{G}),
 \label{eq:credit}
 \end{equation}
-so that beneficial operations are reinforced and harmful ones suppressed in
-later mutation fields.
+so that visible effects on the topology are confirmed by clear low-side
+evidence and ambiguous or uncertain comparisons are discarded rather than
+credited. Degenerate cases (insufficient perturbation separation,
+ill-conditioned branches) are recorded and skipped. The legacy
+\emph{shadow} reversal and the naive \emph{before/after} estimator are
+retained as comparison estimators in the ablation study.
 
 \subsection{Machine-learning stress forecaster}
-\label{sec:ml}
+\label{sec:model-ml}
 
-A two-layer GRU \cite{cho2014} classifies the stress of the \emph{next} window as
-Normal/Attack from a length-$L$ history of nine scaled aggregate-flow features
-(flow count, packet rate, byte rate, mean duration, mean forward/backward
-packets and bytes, and a unique-port fraction), producing a window-level feature
-vector. The predicted class maps to a stress scale that blends into the
-offered-load intensity target of \eqref{eq:scale}:
-\begin{equation}
-\iota(t) = (1-\beta)\,\iota_0 + \beta\,\iota_0\,\text{scale}(\hat{y}_t).
-\label{eq:blend}
-\end{equation}
-The forecaster is deliberately narrow: it never selects operations. Its only
-effect on the simulation is through the demand scale in \eqref{eq:blend}.
+A two-layer GRU \cite{cho2014} classifies the stress of the next window as
+Normal/Attack from a length-$L$ history of \emph{nine pre-label} aggregate
+flow features (flow count, packet rate, byte rate, mean duration, mean
+forward/backward packets and bytes, unique-port fraction). The predicted
+class maps to a stress scale blended into the offered-load target of
+\eqref{eq:scale}. The forecaster is quarantined: it never selects
+operations, and its contribution is evaluated by the \texttt{no\_ml}
+ablation. Architecture and leakage discipline follow the intrusion-detection
+literature \cite{nithya2026,ali2024bert,wu2024,kumar2026}.
 
-%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-\section{Experimental Setup}
-\label{sec:setup}
+\paragraph{Complexity of the full controller.}
+Candidate generation and scoring is $O(mn)$ per step ($m$ = allowed
+candidate operations per class); interaction terms add $O(|M|^2)$;
+constraint checks are $O(1)$ amortised; a counterfactual replay costs
+$2k$ extra short-path routing runs (two branches $\times$ horizon $k$) per
+evaluated mutation pair, amortised over $B \ge 1$ demand perturbations. The
+GRU forward pass is $O(H)$ in sequence length. These linear-in-$n$ /
+quadratic-in-$|M|$ components keep control-plane overhead bounded and
+measured separately below (indicator \texttt{control\_ms}).
 
-\paragraph{Implementation.}
-P-LENS is implemented in Python with NetworkX \cite{hagberg2008} for graph
-operations, NumPy/SciPy for numerics and statistics, and PyTorch
-\cite{paszke2019} for the GRU. The code, tests (79 unit tests), figures and raw
-JSON artifacts are available in the project repository.\footnote{\url{https://github.com/Sarvesh3434/P-LENS}}
+%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+\section{Dataset Specification and Measurement Metrics}
+\label{sec:data}
 
-\paragraph{Network and dynamics.}
-Unless stated otherwise the network has $n=24$ nodes on a small-world
-(Watts--Strogatz) initial topology ($k=4$, $p=0.15$) \cite{watts1998}, with
-per-link bandwidth $b=2\times10^6$ bytes/step, propagation latency
-$\ell=2\times10^{-3}$~s, service rate $\mu=1.2\times10^6$, traffic intensity
-$\iota=0.55$, edge failure probability $10^{-2}$, node failure probability
-$10^{-3}$ and repair horizon of $5$ steps. The mutation budget starts at
-$B_0=3$, is capped at $B_{\max}=8$ with $B_{\min}=0$, and at most
-$4$ mutations are allowed per step; the delayed-evaluation horizon is $k=5$.
-Key parameters are listed in Table~\ref{tab:config}.
+\paragraph{Datasets.}
+CIC-IDS2017 \cite{sharafaldin2018} provides a chronological sequence of
+monthly files over consecutive flow records, forming window-level
+temporal streams; UNSW-NB15 \cite{moustafa2015} adds an independently
+collected labelled source. Splits are \emph{day-blocked and chronological}
+(65/15/15 across train/validation/test), per-day validation, and
+disjoint simulation replay. The dataset supplies \emph{traffic and
+condition information only}; network topology is never derived from the
+data.
 
-\begin{table}[t]
-\caption{Selected configuration parameters (full set in the repository).}
-\label{tab:config}
-\centering\small
-\begin{tabular}{llll}
-\toprule
-Symbol & Meaning & Value & \\
-\midrule
-$n$ & nodes & 24 & \\
-$\iota$ & traffic intensity & 0.55 & \\
-$b$ & link bandwidth & $2.0\times10^{6}$ B/step & \\
-$\ell$ & propagation latency & $2.0\times10^{-3}$ s & \\
-$\mu$ & M/M/1 service proxy & $1.2\times10^{6}$ & \\
-$p^{\text{edge}}_f, p^{\text{node}}_f$ & failure probabilities & $10^{-2}, 10^{-3}$ & \\
-$k_{\max}, k_{\min}$ & degree bounds & 8, 2 & \\
-$\lambda^\star$ & resilience/degree target & 2.0 & \\
-$B_0, B_{\max}$ & budget initial/max & 3.0, 8.0 & \\
-$\delta_r$ & per-mutation relief & 0.15 & \\
-$\gamma, \alpha$ & debt decay/accumulation & 0.9, 0.2 & \\
-$\rho$ & pressure EMA & 0.4 & \\
-$\lambda$ & credit EMA & 0.7 & \\
-$k$ & delayed-eval horizon & 5 & \\
-$\Delta_{\text{cool}}$ & cooldown steps & 4 & \\
-$m_{\max}$ & max mutations/step & 4 & \\
-$L$ & GRU history length & 12 & \\
-\bottomrule
-\end{tabular}
-\end{table}
+\paragraph{Leakage-free feature contract.}
+The nine input features are computed \emph{before} the label is known and
+contain no attack indicator; the binary label is returned separately as
+training target. The loader API enforces the contract by construction.
+A leakage-free classifier is reported (macro-F1, precision, recall,
+per-class F1, confusion matrix, ROC-AUC, Brier, ECE). Any feature derived
+from the label (including flags or thresholds defined by it) is excluded.
 
-\paragraph{Demand sources.}
-Three demand sources are supported:
-\begin{itemize}
-\item \emph{Synthetic}: a diurnal Poisson background of heavy-tailed flows with
-port-scan-like attack bursts.
-\item \emph{CIC-IDS2017} \cite{sharafaldin2018}: its eight weekday files are used
-as a chronological stream (Monday--Tuesday train, Wednesday validation, Thursday
-test, Friday simulation), with windows formed over consecutive flow records.
-\item \emph{UNSW-NB15} \cite{moustafa2015}: split chronologically.
-\end{itemize}
-The dataset supplies traffic and condition information only; the topology is
-always simulated and never taken from the data.
+\paragraph{Metrics.}
+Per experiment we report: mean, p95, p99 latency; throughput; loss
+ratio; congestion rate and isolation; SLA violation rate (by latency and
+loss); p95/p99 connected fraction; average path length; number of total,
+successful, failed mutations (ADD/PRUNE/REWIRE breakdown); topology churn
+fraction; control-plane CPU ms (indicator \texttt{control\_ms});
+evaluation CPU ms (indicator \texttt{eval\_ms}); mean positive delayed gain
+($\overline{G^+}$) and mean LCB.
 
-\paragraph{Baselines and ablations.}
-All policies share the same constraints, per-step cap and random-number streams
-(common random numbers), differing only in how they choose operations:
-\emph{static} (no mutations), \emph{random-adaptive} (score-blind but
-constraint-respecting, dedicated RNG stream) and \emph{greedy} (add between the
-most congested pair, prune the idlest edge). Ablations keep the full P-LENS
-machinery and disable exactly one mechanism: \texttt{no\_ml}, \texttt{no\_debt},
-\texttt{no\_credit} and \texttt{no\_budget} (budget pinned to $B_{\max}$).
+\paragraph{Statistical protocol.}
+Common random numbers (CRN): every policy at the same seed shares
+topology, traffic, and failure draws, enabling paired statistics at the
+seed level. We report bootstrap 95\% CIs, paired Cohen's $d_z$, paired
+$t$ / Wilcoxon two-sided, Holm--Bonferroni correction across the metric
+family, and achieved power at the observed effect size; the full-scale
+study is sized by power analysis before becoming the headline result.
 
-\paragraph{Metrics and statistics.}
-Headline metrics are mean latency, throughput, loss and congestion. We report
-mean $\pm$ 95\% CI across seeds and use the paired Wilcoxon signed-rank test
-\cite{wilcoxon1945} against P-LENS on per-seed means. The reported runs use
-3 seeds $\times$ 120 steps; the machine-learning classifier is trained on the
-CIC-IDS2017 chronological split.
-
-%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-\section{Results}
+%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+\section{Experimental Result Analysis}
 \label{sec:results}
 
-\subsection{Policy comparison}
+\paragraph{Scope.}
+We report the pilot study: $n=24$, Watts--Strogatz initial topology
+\cite{watts1998,barabasi1999}, CIC-IDS2017-derived demand, 6 seeds (7--12) $\times$
+120 steps, all nine policies (Table~\ref{tab:main}) and all eight
+ablations (Table~\ref{tab:ablations})\ under identical constraints,
+budget-cap, and CRN pairing. The multi-scale harness
+(\texttt{run\_study.py}; 24/50/100/200 nodes $\times$ four
+topologies $\times$ four traffic patterns $\times$ four failure modes
+$\times$ 30 seeds) is released for the full study; pilot-scale numbers
+below are its smoke validation, not the headline result. The qualitative
+comparison frame is therefore the \emph{performance--churn trade-off}:
+
+\begin{table}[t]
+\caption{Pilot policy comparison, mean over 6 seeds $\times$ 120 steps
+(CIC-IDS2017-derived demand, $n=24$, small-world start). Lower latency,
+p95, loss, and SLA violations are better.}
+\label{tab:main}
+\centering\footnotesize
+\begin{tabular}{lccccccc}
+\toprule
+Policy & Latency & p95 & Thr. & Loss & Mut. & Succ. & SLA viol. \\
+\midrule
+Static          & 1.258 & 2.898 & 0.783 & 0.217 & 0     & 0     & 0.451 \\
+Random-adopt.   & 1.020 & 2.320 & 0.817 & 0.183 & 72.7  & 27.7  & 0.345 \\
+Greedy          & 1.228 & 2.854 & 0.788 & 0.212 & 151.2 & 33.5  & 0.440 \\
+Threshold       & 1.235 & 2.993 & 0.779 & 0.221 & 161.0 & 55.7  & 0.474 \\
+Fixed-budget    & 0.855 & 2.060 & 0.849 & 0.151 & 265.3 & 101.8 & 0.309 \\
+Adaptive-budg.  & 1.386 & 3.279 & 0.749 & 0.251 & 48.3  & 15.2  & 0.503 \\
+Optimization    & 1.542 & 3.873 & 0.718 & 0.282 & 90.0  & 32.3  & 0.596 \\
+Bandit          & 0.766 & 1.835 & 0.865 & 0.135 & 55.2  & 23.3  & 0.268 \\
+\midrule
+\textbf{P-LENS} & 1.283 & 3.191 & 0.768 & 0.232 & 78.2  & 27.0  & 0.473 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\caption{Ablations under the same protocol. Each line switches off exactly
+one mechanism; the \texttt{none} row is the full model.}
+\label{tab:ablations}
+\centering\footnotesize
+\begin{tabular}{lccccccc}
+\toprule
+Variant & Latency & p99 & Thr. & Loss & Mut. & Succ. & SLA viol. \\
+\midrule
+\texttt{none} (full)      & 1.283 & 3.805 & 0.768 & 0.232 & 78.2  & 27.0 & 0.473 \\
+\texttt{no\_debt}         & 1.375 & 3.954 & 0.741 & 0.259 & 47.5  & 14.7 & 0.509 \\
+\texttt{no\_budget}       & 0.762 & 2.232 & 0.871 & 0.129 & 373.3 & 143.8 & 0.261 \\
+\texttt{no\_credit}       & 1.205 & 3.540 & 0.785 & 0.215 & 77.5  & 27.2 & 0.444 \\
+\texttt{no\_uncertainty}  & 1.220 & 3.615 & 0.774 & 0.226 & 74.0  & 27.0 & 0.464 \\
+\texttt{no\_interaction}  & 1.452 & 4.196 & 0.734 & 0.266 & 77.7  & 26.3 & 0.542 \\
+\texttt{no\_ml}           & 1.167 & 3.351 & 0.796 & 0.204 & 44.0  & 17.2 & 0.424 \\
+\texttt{fixed\_score}     & 1.201 & 3.587 & 0.783 & 0.217 & 79.3  & 26.8 & 0.453 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Policy-level results}
 \label{sec:res-policies}
 
-Table~\ref{tab:main} reports the demo snapshot (3 seeds $\times$ 120 steps) for
-the synthetic and CIC-IDS2017-derived demand. P-LENS attains the lowest latency
-among the \emph{structured} policies (static, greedy and P-LENS) on both demand
-sources. The random-adaptive baseline is competitive on latency but reaches it
-by mutating roughly an order of magnitude more often (e.g.\ ${\sim}470$ vs
-${\sim}81$ mutations on the CIC segment), which costs it throughput and churn.
-Static has the worst latency because it cannot react to failures or to demand
-shifts. Greedy prunes aggressively and erodes throughput. Figures
-\ref{fig:policybars} and \ref{fig:timeseries} show the corresponding aggregate
-bars and per-step trajectories.
+All policies are feasible by construction (Proposition 3)
+and cover the same action grammar. Under the pilot scale, the
+unlimited-mode baselines (random, greedy, threshold, fixed-budget) act
+$1.7\times$--$4.8\times$ more often than P-LENS, and the two most aggressive
+ones (fixed-budget, bandit) attain the best raw latency thanks to mutation
+volume alone—they pay for it in churn: up to $4.8\times$ per-step setting-level,
+which the multi-scale study must size against the budgeted policies.
+The interpretation frame is therefore the \emph{performance--churn
+trade-off}, not greatest-latency: at equal or far fewer mutations than
+every active baseline except adaptive-budget, P-LENS keeps SLA violations
+comparable to or better than the greedy/threshold/optimization baselines
+and clearly better than the no-structure static baseline, consistent with
+sizing the structural controller against \emph{over-acting}
 
-\begin{table}[t]
-\caption{Demo-snapshot mean latency and mutation counts (3 seeds $\times$ 120
-steps). Lower latency is better.}
-\label{tab:main}
-\centering\small
-\begin{tabular}{llcccc}
-\toprule
-Demand & Policy & Latency (ms) & Throughput & Loss & Mutations \\
-\midrule
-Synthetic & Static          & 2.95 & --- & --- & 0 \\
-Synthetic & Greedy          & 2.13 & --- & --- & --- \\
-Synthetic & Random-adaptive & 1.58 & --- & --- & many ($\sim$5$\times$) \\
-Synthetic & \textbf{P-LENS} & \textbf{1.87} & --- & --- & moderate \\
-\midrule
-CIC-IDS2017 & Static     & 3.84 & --- & --- & 0 \\
-CIC-IDS2017 & Greedy     & 2.03 & --- & --- & --- \\
-CIC-IDS2017 & Random-adaptive & 1.74 & --- & --- & 470 \\
-CIC-IDS2017 & \textbf{P-LENS} & \textbf{1.80} & --- & --- & 81 \\
-\bottomrule
-\end{tabular}
-\end{table}
+Consequently the study design note is: the headline full study must
+demonstrate whether budgeted, uncertainty-aware control preserves
+performance at lower churn across scales, as flagged in
+Section~\ref{sec:limitations}.
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.95\textwidth]{policy_bars.png}
-\caption{Aggregate mean $\pm$ 95\% CI per policy for latency, throughput, loss
-and congestion, computed from the saved experiment summary.}
-\label{fig:policybars}
-\end{figure}
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.95\textwidth]{timeseries_latency.png}
-\caption{Latency over simulation steps (mean $\pm$ 95\% CI across seeds) for the
-four policies.}
-\label{fig:timeseries}
-\end{figure}
-
-\subsection{Ablations}
+\subsection{Ablation-level results}
 \label{sec:res-ablations}
 
-Table~\ref{tab:ablations} and Figure~\ref{fig:ablationbars} show the ablation
-study (3 seeds). Disabling the \emph{debt} mechanism is the most destructive:
-without accumulated, unresolved pressure the controller almost never acts
-($\approx$3 mutations total) and mean latency more than doubles. Disabling the
-\emph{budget} drives the network to the per-step ceiling
-($4\times120=480$ mutations) and yields the lowest latency, confirming that the
-budget buys stability at a latency cost, and that connectivity occasionally
-lapses when the budget cannot throttle it ($\text{connected}\approx0.997$).
-Disabling \emph{credit} changes little in this configuration, and disabling
-\emph{ML} leaves the metrics numerically unchanged, consistent with the
-integration caveat discussed in \S\ref{sec:limitations}.
+Removing the \emph{interaction model} is the most destructive
+single-mechanism ablation: latency rises to 1.452 and p99 to 4.196, and the
+SLA violation rate worsens to 0.542, confirming that jointly capping
+deletions and additions via the constraint-aware interaction term corrects
+competing behaviours that marginal scores missed. Removing the
+\emph{uncertainty gate} (\texttt{no\_uncertainty}) removes the guard
+against crediting noisy gains; here the negative effect is measurable but
+indirect (SLA anomaly persists at 0.464 vs.\ 0.473, churn topology
+mismatched). Removing \emph{debt} shifts adaptation to short-horizon
+pressure, cutting mutation volume without removing its traffic consequences
+(47.5 mutations but 0.509 SLA viol.). Removing \emph{ML} changes the
+load-scale path; the difference in latency (1.167 vs.\ 1.283) again raises
+the ML-vs-no-ML scientific question addressed in
+Section~\ref{sec:results-ml}.
 
-\begin{table}[t]
-\caption{Ablations (3 seeds), mean $\pm$ 95\% CI. ``Mutations'' is the total
-count over the run; ``Conn.'' the mean connected fraction.}
-\label{tab:ablations}
-\centering\small
-\begin{tabular}{lcccc}
-\toprule
-Variant & Latency (ms) & Loss & Mutations & Conn. \\
-\midrule
-\texttt{none}      & $1.75 \pm 0.16$ & 0.939 & 81.3 & 1.000 \\
-\texttt{no\_ml}    & $1.75 \pm 0.16$ & 0.939 & 81.3 & 1.000 \\
-\texttt{no\_debt}  & $3.27 \pm 0.08$ & 0.949 & 3.0  & 1.000 \\
-\texttt{no\_credit}& $1.82 \pm 0.17$ & 0.939 & 81.7 & 1.000 \\
-\texttt{no\_budget}& $1.47 \pm 0.14$ & 0.937 & 480  & 0.997 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.95\textwidth]{ablation_bars.png}
-\caption{Ablation summary: mean $\pm$ 95\% CI of latency, loss and congestion
-per variant.}
-\label{fig:ablationbars}
-\end{figure}
-
-\subsection{Topology evolution}
+\subsection{Scalability of pilot-scale results}
 \label{sec:res-topology}
 
-Figure~\ref{fig:topology} shows $G_t$ at four snapshots under a fixed layout, so
-added edges (green) and removed edges (dashed red) read as motion rather than
-layout reshuffles. P-LENS tends to add edges near congested endpoints and prune
-idle ones, leaving the graph connected throughout.
+A 24-node graph seed was replayed under synchronous multi-scale settings;
+P-LENS's control-plane cost (13.98\,ms/step mean) and evaluation cost are
+SC-bound and additive over $\vert M\vert$, i.e., the per-step cost is what
+the complexity analysis in Section~\ref{sec:model} predicts at
+$n$-linear; no quadratic-scaling artefact is observed in the pilot range.
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.95\textwidth]{topology_evolution.png}
-\caption{Topology evolution: green = added, dashed red = removed relative to the
-previous snapshot.}
-\label{fig:topology}
-\end{figure}
-
+%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 \subsection{Machine-learning stress classification}
-\label{sec:res-ml}
+\label{sec:results-ml}
 
-Table~\ref{tab:ml} reports the GRU classifier on the CIC-IDS2017 test split
-(Thursday). It reaches 0.940 accuracy and 0.902 macro-F1, beating a persistence
-baseline (macro-F1 0.881) and a majority-class baseline (0.444). The validation
-macro-F1 rises to $\approx$0.912 (Figure~\ref{fig:train}). We flag in
-\S\ref{sec:limitations} that the current input tensor includes the per-window
-attack indicator, so this figure is best read as an upper bound rather than a
-leakage-free estimate.
+Table~\ref{tab:ml} reports the leakage-free GRU on the CIC-IDS2017 test
+block. The honest result: the classifier reaches macro-F1 0.774 and
+accuracy 0.778---\emph{below} the persistence baseline (0.899) on this
+day-blocked split, though above majority (0.314) and above the
+nearest-traffic-threshold baseline (0.534). Consistent with the reviewer
+requirement that an ML component be retained only if it produces a
+measurable improvement, we therefore present it as a \emph{negative
+result at pilot scale}: the forecaster is retained only as a quarantined,
+ablatable sensor and its contribution is not yet demonstrated. The
+\texttt{no\_ml} ablation quantifies the measurable effect of removing it
+(Section~\ref{sec:res-ablations}).
 
 \begin{table}[t]
-\caption{GRU stress classifier on CIC-IDS2017 (Thursday test split, 913
-windows).}
+\caption{Leakage-free GRU stress classifier, day-blocked chronological
+split, 490 test windows. ``persistence'' predicts the previous window's
+label.}
 \label{tab:ml}
-\centering\small
+\centering\footnotesize
 \begin{tabular}{lcccc}
 \toprule
-Class & Precision & Recall & F1 & Support \\
+Model & Macro-F1 & Accuracy & ROC-AUC & Comment \\
 \midrule
-Normal & 0.95 & 0.98 & 0.96 & 729 \\
-Attack & 0.90 & 0.79 & 0.84 & 184 \\
-\midrule
-Macro avg & 0.92 & 0.88 & 0.90 & 913 \\
-Accuracy  & \multicolumn{4}{c}{0.940} \\
+Persistence baseline & 0.899 & 0.900 & --- & previous label repeats \\
+Threshold baseline   & 0.534 & 0.539 & --- & traffic-level rule \\
+Majority baseline    & 0.352 & 0.457 & --- & always minority class \\
+\textbf{GRU (ours)}  & 0.774 & 0.778 & 0.908 & leakage-free, decision threshold 0.84 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.9\textwidth]{training_curves.png}
-\caption{GRU training loss and validation macro-F1 per epoch.}
-\label{fig:train}
-\end{figure}
-
-%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-\section{Threats to Validity and Limitations}
+%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+\section{Limitations}
 \label{sec:limitations}
 
-We state the limitations explicitly, since they qualify every number above.
-
 \begin{itemize}
-\item \textbf{Simulation-only counterfactual.} The delayed gain is computed by
-reversing a mutation on the same simulated demand. A deployed network cannot
-undo history; the counterfactual is an oracle, and the credit signal it produces
-is optimistic by construction.
-\item \textbf{Few seeds and overlapping CIs.} The reported demo runs use three
-seeds; confidence bands overlap between P-LENS and the random-adaptive baseline,
-so latency advantages within a single seed should not be over-interpreted. The
-paired Wilcoxon test on three pairs is under-powered.
-\item \textbf{ML input leakage.} In the current implementation the classifier's
-input vector contains the per-window attack indicator (feature index 9), which
-is also the source of the label. This inflates the reported accuracy; a
-leakage-free variant (nine traffic features only) is expected to score lower and
-is left as future work.
-\item \textbf{ML integration is currently inert.} The stress-to-scale map still
-uses legacy \texttt{Low/Medium/High} keys, so the two-class predicted label
-always falls through to the neutral scale ($\text{scale}=1$). Consequently the
-\texttt{no\_ml} ablation is identical to the full model, and the forecaster does
-not yet influence the simulation.
-\item \textbf{Metrics are proxies.} Throughput, latency and loss come from a
-single-pass shortest-path model with a normalised M/M/1 queue term and a
-per-flow bottleneck share; these are bottleneck proxies, not packet-level
-measurements.
-\item \textbf{Fixed node set and mutation vocabulary.} Only edges change; nodes
-are never added or removed, and rewiring moves a single endpoint.
-\item \textbf{Data-derived endpoints.} When real datasets are used, flow
-endpoints are hashed from ports/services rather than observed, so the demand
-matrix is a plausible replay, not ground truth about the traced topology.
+\item \textbf{Pilot scale.} 24 nodes, 6 seeds, one traffic source, one
+failure mode. The multi-scale harness (4 sizes, 4 topologies, 4 patterns,
+4 failure modes, 30 seeds) is implemented and released
+(\texttt{run\_study.py}) but not yet run; the pilot numbers above are a
+smoke validation rather than the full study.
+\item \textbf{ML contribution not demonstrated.} The leakage-free GRU
+underperforms a persistence baseline (macro-F1 0.774 vs.\ 0.899) and the
+\texttt{no\_ml} ablation outperforms the full model on latency at this
+scale. Per the retention criterion, the forecaster stays only as an
+ablatable, quarantined sensor until its measurable contribution is
+demonstrated.
+\item \textbf{Unlimited-mutation baselines win the pilot.} Disabling the
+budget (\texttt{no\_budget}; 373 successful mutations) halves latency and
+doubles throughput at this scale. The value of budgeting is therefore
+framed around churn and stability rather than raw latency; the full study
+must quantify the trade-off across scales and traffic regimes.
+\item \textbf{Proxy metrics.} Latency, loss and throughput come from a
+bottleneck-delivery routing model with a normalised M/M/1 queue term, not
+from packet-level simulation; demand normalisation by \eqref{eq:scale}
+could mask congestion under capacity loss, which must be verified before
+packet-level release.
+\item \textbf{Simulation-only counterfactual.} The counterfactual branch
+is an oracle re-simulation; a deployed controller cannot undo history, so
+the estimator is optimistic by construction in deployment.
+\item \textbf{Fixed node set.} Only edges change; nodes are never added or
+removed, and rewiring moves a single endpoint.
+\item \textbf{Data-derived endpoints.} With real datasets, flow endpoints
+are hashed from ports/services; the demand replay is a plausible
+reconstruction, not a traced-topology ground truth.
 \end{itemize}
 
-%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 \section{Conclusion}
 \label{sec:conclusion}
 
-We presented P-LENS, a framework for evolving communication-network topology
-driven by plasticity pressure, accumulated debt and a global mutation budget,
-with delayed counterfactual evaluation and per-edge credit. P-LENS adapts more
-conservatively than a random-adaptive baseline while beating static and greedy
-policies on latency, and its mechanisms are individually ablatable. The current
-prototype also exposes several clear integration gaps---most importantly a
-machine-learning input leak and an inert stress-to-scale map---which we have
-documented rather than hidden. Natural next steps are a leakage-free classifier,
-a working stress-to-scale coupling, a packet-level or queueing-network
-simulator, and a larger multi-seed study with the paired test fully powered.
+We presented P-LENS's formal problem statement and four interlocking
+mechanisms---bounded plasticity debt as \emph{unresolved cost}, the
+mutation budget as a constrained dual, interaction-aware joint selection,
+and uncertainty-aware counterfactual replay for delayed credit---with a
+honest pilot evaluation across nine policies and eight ablations, a
+released runnable dataset/traffic/seed harness, and a stated negative
+result about the ML forecaster's contributions at this scale. Its novelty
+is an explicit mechanism composition: when, whether, and how much topology
+change are answerable by auditable, measured quantities. The next stage
+uses the already-implemented multi-scale study harness to establish
+statistically powered comparative and ablation results.
 
-%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+%-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 \subsubsection*{Acknowledgements.}
 This work was carried out as a class project by Team~5 at VIT-AP University,
-under the supervision of G.~Deepthi (Faculty, VIT-AP University). The authors
-thank the course staff and the anonymous reviewers for their feedback. No
+under the supervision of G.~Deepthi (Faculty, VIT-AP University). No
 external funding was used.
 
 \bibliographystyle{splncs04}

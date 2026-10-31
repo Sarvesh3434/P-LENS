@@ -25,3 +25,4 @@ Thumbs.db
 # Per-seed giant per-step logs (regenerable from runs; exceed GitHub 100MB limit)
 results/pilot_v2/runs/experiment_summary.json
 results/pilot_v3/runs/experiment_summary.json
+tools/
