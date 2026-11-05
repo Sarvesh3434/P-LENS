@@ -1,4 +1,18 @@
-"""[DIAGRAM] Mutation field MF_ij^op per candidate edge. [ASSUMPTION]"""
+"""[DIAGRAM] Mutation field MF_ij^op per candidate edge.
+
+The field is the linear part of the unified objective.  In the default mode the
+score is
+
+    MF_a = gate(B) * ( w_need * PP_a + w_debt * PD_a + w_ben * benefit_a
+                       + w_credit * MC_a - lambda * cost_a
+                       - w_pen * penalty_a
+                       - rho * uncertainty_a + beta_D * relief_potential_a )
+
+where ``lambda`` is the dual price from :mod:`plens.economics`.  Passing
+``price=None`` reproduces the original fixed-cost-weight behaviour for
+compatibility.  The interaction and third-order terms are added by the selector,
+not here, so the field remains a marginal score.
+"""
 
 from __future__ import annotations
 
@@ -45,6 +59,14 @@ def constraint_penalty(net: EvolvingNetwork, i: int, j: int, op: str) -> float:
     return min(pen, 2.0)
 
 
+def _relief_potential(debt_relief, i: int, j: int) -> float:
+    if debt_relief is None:
+        return 0.0
+    if np.isscalar(debt_relief):
+        return float(debt_relief)
+    return float(0.5 * (debt_relief[i] + debt_relief[j]))
+
+
 def score_candidate(
     net: EvolvingNetwork,
     i: int,
@@ -56,19 +78,29 @@ def score_candidate(
     budget: float,
     cfg: Config,
     use_credit: bool,
+    price: float | None = None,
+    uncertainty: float = 0.0,
+    debt_relief=None,
 ) -> float:
     a = cfg.field_weights
     need, debt = _need_debt(pp, pd, i, j)
     cred = mc.get(canon(i, j), 0.0) if use_credit else 0.0
     cost = cfg.mutation_cost[op] / max(max(cfg.mutation_cost.values()), 1e-9)
     g = gate(budget, cfg.mutation_cost[op])
+    # Price the cost either with the dual price (unified mode) or the legacy
+    # fixed field weight.  Both are expressed in the same normalized cost unit.
+    economic_cost = (float(a["cost"]) if price is None else float(price)) * cost
+    unc_w = float(getattr(cfg, "unified_uncertainty_weight", 0.0))
+    debt_w = float(getattr(cfg, "unified_debt_weight", 0.0))
     mf = g * (
         a["need"] * need
         + a["debt"] * debt
         + a["benefit"] * expected_benefit(net, i, j, op)
         + a["credit"] * cred
-        - a["cost"] * cost
+        - economic_cost
         - a["penalty"] * constraint_penalty(net, i, j, op)
+        - unc_w * max(float(uncertainty), 0.0)
+        + debt_w * _relief_potential(debt_relief, i, j)
     )
     return float(mf)
 
@@ -81,6 +113,9 @@ def generate_field(
     budget: float,
     cfg: Config,
     use_credit: bool = True,
+    price: float | None = None,
+    uncertainty: float = 0.0,
+    debt_relief=None,
 ) -> List[dict]:
     """Enumerate ADD / PRUNE / REWIRE candidates and score them. Never random. [DIAGRAM]"""
     n = net.n
@@ -88,44 +123,33 @@ def generate_field(
     alive = net.alive_nodes()
     existing = {canon(u, v) for u, v in net.G.edges()}
 
+    def sc(i: int, j: int, op: str) -> float:
+        return score_candidate(
+            net, i, j, op, pp, pd, mc, budget, cfg, use_credit,
+            price=price, uncertainty=uncertainty, debt_relief=debt_relief,
+        )
+
     for a in alive:
         for b in alive:
             if a >= b:
                 continue
             e = canon(a, b)
             if e not in existing:
-                out.append(
-                    {
-                        "op": "ADD",
-                        "i": a,
-                        "j": b,
-                        "score": score_candidate(net, a, b, "ADD", pp, pd, mc, budget, cfg, use_credit),
-                    }
-                )
+                out.append({"op": "ADD", "i": a, "j": b, "score": sc(a, b, "ADD")})
     for u, v in existing:
-        out.append(
-            {
-                "op": "PRUNE",
-                "i": u,
-                "j": v,
-                "score": score_candidate(net, u, v, "PRUNE", pp, pd, mc, budget, cfg, use_credit),
-            }
-        )
+        out.append({"op": "PRUNE", "i": u, "j": v, "score": sc(u, v, "PRUNE")})
         # Candidate pruning for scalability: REWIRE is the only O(m n) family.
         # Rank potential new endpoints by their combined pressure/debt signal and
         # keep the top-k; k=0 retains the exhaustive (original) enumeration.
         k = int(getattr(cfg, "rewire_targets_per_edge", 0) or 0)
         targets = alive
         if 0 < k < len(alive):
-            targets = sorted(
-                alive, key=lambda x: float(pp[x] + pd[x]), reverse=True
-            )[:k]
+            targets = sorted(alive, key=lambda x: float(pp[x] + pd[x]), reverse=True)[:k]
         for l in targets:
             if l == u or l == v:
                 continue
             if canon(u, l) in existing:
                 continue
             # REWIRE: remove (u,v), add (u,l) — move one endpoint [ASSUMPTION from prompt]
-            sc = score_candidate(net, u, l, "REWIRE", pp, pd, mc, budget, cfg, use_credit)
-            out.append({"op": "REWIRE", "i": u, "j": v, "l": l, "score": sc})
+            out.append({"op": "REWIRE", "i": u, "j": v, "l": l, "score": sc(u, l, "REWIRE")})
     return out

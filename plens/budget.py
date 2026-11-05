@@ -1,28 +1,34 @@
-﻿"""Adaptive mutation budget as the dual variable of a constrained programme.
+﻿"""Adaptive mutation budget as a bounded resource account priced by a dual variable.
 
-Selection at each step is the constrained problem
+Selection at each step solves the constrained programme
 
-    max_{M feasible}  E[V(M)] - lambda_c churn(M) - lambda_r risk(M)
-    s.t.              cost(M) <= B_t,  |M| <= m_max,
+    max_{M feasible}  E[V(M)] - lambda_t c(M) - mu churn(M) - nu risk(M)
+    s.t.              c(M) <= B_t,  |M| <= m_max,
                       structural constraints (degree, connectivity, lambda*)
 
-where ``V`` combines latency, loss, throughput and resilience.  The budget
-``B_t`` is the scalar price of structural change.  Its update is a bounded
-debit/credit account driven by debt and by the lower confidence bound of the
-measured mutation gain:
+``B_t`` is the **bounded primal resource account**; ``lambda_t`` is the **dual
+price** of one cost unit, updated by projected dual ascent in
+:mod:`plens.economics`.  This is an explicit correction of the earlier draft,
+which called the budget itself a dual variable.  The two are distinct:
+
+* the account ``B_t`` is what the selector may spend;
+* the price ``lambda_t`` is the marginal value of relaxing that account.
+
+The account update is
 
     LCB_t   = mean_gain_t - z * std_gain_t
     safety  = 1 / (1 + a_o * overload_t + a_f * failure_t)
-    refill  = (b0 + beta * PD_t) * (1 - 0.5*u_t) * safety * ml_refill
-    credit  = (eta_g * LCB_t - eta_s * stability_t) * (1 - 0.5*u_t) * safety
-    B_{t+1} = clip(B_t - spent_t + refill + credit, B_min, B_max)
+    damping = (1 - 0.5*u_t) * safety * ml_refill
+    refill  = (b0 + beta * PD_t) * damping / (1 + d_p * lambda_t)
+    credit  = (eta_g * LCB_t - eta_s * churn_t) * damping
+    B_{t+1} = clip(B_t - spent_t + refill + credit
+                   + kappa_mu*tanh(max(MU_t - MU_0, 0))*damping,
+                   B_min, B_max)
 
-Under persistent overload or repeated failure the refill is halved, so churn
-decays unless the measured lower-confidence gain keeps justifying it.  The LCB
-makes the controller conservative when the mutation-value estimate is noisy.
-``B`` is bounded by construction (projection), and the selector only applies
-feasible operations, so hard topology constraints are preserved regardless of
-``B``.
+with marginal utility ``MU_t = (V_hat_t - lambda_t c_t) / max(c_t, eps)``.
+The price enters the mutation field as ``-lambda_t c_a``, so a candidate is
+accepted only when its estimated value exceeds its dual-priced cost.  This gives
+the primal-dual relationship the original debit/credit rule lacked.
 
 ``mode="legacy"`` reproduces the original linear update for comparison;
 ``mode="fixed"`` pins the budget to its initial value; ``enabled=False`` is the
@@ -32,6 +38,7 @@ feasible operations, so hard topology constraints are preserved regardless of
 from __future__ import annotations
 
 from experiments.config import Config
+from plens.economics import EconomyState, economy_step
 
 
 def gate(budget: float, min_cost: float) -> float:
@@ -52,42 +59,34 @@ def update_budget(
     uncertainty: float = 0.0,
     refill_scale: float = 1.0,
     mode: str | None = None,
+    dual_price: float | None = None,
+    marginal_utility: float | None = None,
+    iteration: int = 0,
+    churn: float = 0.0,
 ) -> float:
-    if not enabled:
-        return cfg.mutation_budget_max
-    mode = mode or cfg.budget_mode
-    if mode == "fixed":
-        return float(cfg.mutation_budget_initial)
-    if mode == "legacy":
-        nxt = (
-            b
-            - spent
-            + cfg.budget_refill * mean_pd
-            + cfg.eta_g * mean_pos_gain
-            - cfg.eta_s * mean_stability_cost
-        )
-        return float(max(cfg.mutation_budget_min, min(cfg.mutation_budget_max, nxt)))
+    """Advance the resource account by one step and return the new budget.
 
-    lcb = float(mean_pos_gain) - cfg.budget_uncertainty_z * max(float(gain_std), 0.0)
-    safety = 1.0 / (
-        1.0
-        + cfg.budget_overload_damping * max(float(overload), 0.0)
-        + cfg.budget_failure_damping * max(float(failure_rate), 0.0)
+    ``dual_price``/``marginal_utility`` are optional because the public helper
+    is also used in unit tests and ablations; when omitted the price is taken
+    from the configuration's initial value.
+    """
+    price = float(cfg.budget_price_initial if dual_price is None else dual_price)
+    state = EconomyState(budget=float(b), price=price)
+    out = economy_step(
+        state,
+        spent=spent,
+        mean_pd=mean_pd,
+        mean_gain=mean_pos_gain,
+        mean_stability=mean_stability_cost,
+        cfg=cfg,
+        enabled=enabled,
+        gain_std=gain_std,
+        overload=overload,
+        failure_rate=failure_rate,
+        uncertainty=uncertainty,
+        refill_scale=refill_scale,
+        mode=mode,
+        iteration=iteration,
+        churn=churn,
     )
-    damping = (1.0 - 0.5 * float(np_clip(uncertainty))) * max(float(refill_scale), 0.0) * safety
-    refill = (cfg.budget_base_refill + cfg.budget_refill * max(float(mean_pd), 0.0)) * damping
-    # The measured (lower-confidence) mutation gain and its stability price are
-    # a signed credit line: evidence that mutations pay raises the account even
-    # when current debt is low, while churn without measurable benefit lowers it.
-    credit = (cfg.eta_g * lcb - cfg.eta_s * max(float(mean_stability_cost), 0.0)) * damping
-    # Persistent overload / repeated failure dampens (but does not freeze) the
-    # account: spending still costs, so churn decays when actions stop helping.
-    if overload >= cfg.budget_overload_threshold or failure_rate >= 0.5:
-        refill *= 0.5
-    nxt = b - spent + refill + credit
-    return float(max(cfg.mutation_budget_min, min(cfg.mutation_budget_max, nxt)))
-
-
-def np_clip(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
-    return max(lo, min(hi, float(x)))
-
+    return float(out.budget)

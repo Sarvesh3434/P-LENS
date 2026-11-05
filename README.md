@@ -77,19 +77,42 @@ simulated, never taken from data.
 1. **Monitor** — per-node indicators on the *usable* topology: drift `D`,
    traffic mismatch `F`, congestion `C`, resilience deficiency `R`.
 2. **Plasticity pressure** `PP = EMA(w·[D,F,C,R])`.
-3. **Plasticity debt** `PD(t+1) = γ·PD + α·PP − relief` (relief after successful
-   mutations, endpoints + 1-hop neighbours).
-4. **Budget** `B(t+1)` — refill from mean debt and delayed gains, penalized by
-   stability cost; hard cap `B_max`, per-step cap `max_mutations_per_step`.
-5. **Mutation field** `MF_ij^op = gate(B) · (w_need·PP + w_debt·PD + w_ben·benefit
-   + w_cred·MC − w_cost·cost − w_pen·penalty)`.
-6. **Selector** — greedy by score under hard constraints: degree caps, min
-   degree, connectivity required, λ-target on usable average degree, cooldown.
-   Every rejection is logged with its reason.
-7. **Delayed evaluation at t+k** — counterfactual shadow: re-route identical
-   demand on the topology with the mutation reverted; gain
-   `G = w_u·utility + w_r·resilience − w_s·stability(churn)`.
-8. **Credit** `MC_ij ← λ·MC + (1−λ)·tanh(G)` feeds the next mutation field.
+3. **Dependency-aware plasticity debt** (`plens/debt.py`). Debt is accumulated
+   *persistent structural inadequacy*, not an integral of raw pressure:
+   severity above a deadband, persistence evidence, duration, criticality and
+   the rate of change form a local inadequacy `s_i(t)`; a row-stochastic
+   dependency matrix `P` propagates an overloaded node's inadequacy to the nodes
+   that depend on it. A modification gate damps accumulation while a
+   neighbourhood is being reconfigured. The update uses explicit saturation and
+   projection operators, so `PD_i ∈ [0,1]` for every boundary case, and the
+   no-mutation map contracts to `PD* = ηs / (ηs + γ(1−s))`.
+4. **Mutation economics** (`plens/economics.py`, `plens/budget.py`). Selection
+   solves `max V(S) − λ c(S) s.t. c(S) ≤ B_t`. The Lagrangian multiplier
+   `λ_t ≥ 0` is the **dual price** of one cost unit, updated by projected dual
+   ascent; `B_t` is the **bounded primal resource account** the selector may
+   spend. The account refills from debt, lower-confidence gains and marginal
+   utility, and is projected onto `[B_min, B_max]`. This corrects the earlier
+   conflation of the budget with the dual variable.
+5. **Mutation field** — marginal score
+   `MF_a = gate(B)·(w_need·PP + w_debt·PD + w_ben·benefit + w_cred·MC
+   − λ·cost − w_pen·penalty − ρ·uncertainty + β_D·relief)`.
+6. **Dependency-constrained joint selection** (`plens/interaction.py`,
+   `plens/selector.py`) — adds pairwise and third-order interaction factors,
+   closes hard conflicts transitively, can prefer a compatible pair over the
+   best singleton, and applies the budget, per-step cap, degree/connectivity/
+   λ-target constraints and cooldowns. Every rejection is logged with a reason.
+7. **Drift-aware counterfactual attribution** (`plens/attribution.py`,
+   `plens/evaluation.py`) — matched replay compares the factual branch with a
+   counterfactual branch that differs only by the target mutation. Direct gain
+   is measured with the target alone; indirect gain is the remainder mediated by
+   later topology changes. A Student-t lower confidence bound (or Hoeffding for
+   a single sample) gates credit, and demand/metric drift marks replay
+   unreliable and damps credit.
+8. **Credit** `MC_ij ← λ·MC + (1−λ)·tanh(G_lcb·credit_weight)` feeds the next
+   field; the economy then updates `λ` and `B`.
+
+The unified objective and paper-ready pseudocode are in `plens/unified.py`;
+executable statements of the propositions are in `plens/theory.py`.
 
 ### ML role (deliberately narrow)
 
@@ -105,7 +128,9 @@ results only through the demand path — verified by `tests/test_ml_integration.
   (no mutations), `random` (score-blind order, dedicated RNG stream),
   `greedy` (add between most congested pair, prune idlest edge).
 - Ablations, each isolating exactly one mechanism while keeping the full
-  P-LENS machinery: `no_ml`, `no_debt`, `no_credit`, `no_budget`.
+  P-LENS machinery: `no_ml`, `no_debt`, `no_credit`, `no_budget`,
+  `no_uncertainty`, `no_interaction`, `no_debt_propagation`, `no_dual_price`,
+  `no_attribution`, `no_unified`, `no_counterfactual`.
 - Stats: mean ± 95% CI over seeds, paired Wilcoxon signed-rank vs P-LENS.
 
 ## Results snapshot (demo runs, 3 seeds × 120 steps)

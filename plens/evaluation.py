@@ -12,11 +12,20 @@ Two estimators are provided.
    Both branches consume the identical logged demand, the identical failure
    random-number state, and the identical concurrent mutations.  The only
    difference is the target mutation.  This separates its effect from concurrent
-   topology changes, failures and traffic variation.  Uncertainty is estimated
-   by replaying the pair under ``B`` matched demand perturbations (lognormal OD
-   noise, renormalised to the original total) and forming a lower confidence
-   bound on the gain.  Credit is only updated when the effect exceeds
-   ``cf_min_effect`` and the estimate is confident enough.
+   topology changes, failures and traffic variation.
+
+   **Attribution extension.**  When ``attribution_mode="direct_indirect"`` the
+   estimator additionally replays (i) the target mutation alone and (ii) no
+   mutations at all.  The direct effect is ``V(target only) - V(none)``; the
+   indirect effect is ``total - direct`` and captures the value realised through
+   subsequent topology changes.  A drift diagnostic compares the replay demand
+   and metrics with the live world; above ``cf_drift_threshold`` the estimate is
+   marked unreliable and its credit is damped.
+
+   Uncertainty is estimated from the paired per-step gains with a Student-t
+   lower confidence bound (or Hoeffding for a single observation).  Credit is
+   only updated when the effect exceeds ``cf_min_effect`` and the estimate is
+   confident enough.
 
 2. ``shadow`` (legacy).  Reverse the mutation on the *current* topology.  This
    is cheap but confounded by everything that happened in between; it is kept
@@ -36,6 +45,14 @@ from network.failures import apply_failures
 from network.graph import EvolvingNetwork, canon
 from network.traffic import route_and_load
 from plens import mutations as muts
+from plens.attribution import (
+    build_result,
+    demand_drift,
+    drift_score,
+    is_reliable,
+    lcb_stats,
+    metric_drift,
+)
 
 # EdgeState objects saved before a legacy shadow revert, keyed by canon edge [SIM]
 _shadow_saved: Dict[Tuple[int, int], object] = {}
@@ -102,6 +119,8 @@ def replay_branch(
     exclude_token: int | None,
     cfg,
     demand_override: Sequence[np.ndarray] | None = None,
+    include_token: int | None = None,
+    drop_all: bool = False,
 ) -> Dict[str, float]:
     """Replay one branch from ``snapshot`` for ``horizon`` steps.
 
@@ -110,6 +129,9 @@ def replay_branch(
     with a ``token``).  ``logs`` is indexed relative to the replay start.  A
     single-pass router is used: both branches share it, so the comparison stays
     matched and the expensive exploratory pass is not paid twice per step.
+
+    ``include_token`` restricts the branch to exactly that mutation; ``drop_all``
+    suppresses every mutation.  They support direct/indirect attribution.
     """
     branch = copy.deepcopy(snapshot)
     trajectory = []
@@ -122,12 +144,25 @@ def replay_branch(
         branch.set_demand(np.asarray(d, dtype=float))
         route_and_load(branch, two_pass=False)
         trajectory.append(dict(branch.last_metrics))
+        if drop_all:
+            continue
         for item in entry.get("mutations", []):
-            if exclude_token is not None and item.get("token") == exclude_token:
+            token = item.get("token")
+            if include_token is not None and token != include_token:
+                continue
+            if exclude_token is not None and token == exclude_token:
                 continue
             _apply_logged(branch, item["cand"])
     # metrics after each routing pass, before the next step's mutations
     return trajectory
+
+
+def _has_later_mutations(logs: Sequence[dict], token: int) -> bool:
+    for entry in logs:
+        for item in entry.get("mutations", []):
+            if item.get("token") != token:
+                return True
+    return False
 
 
 def evaluate_replay(
@@ -138,6 +173,10 @@ def evaluate_replay(
     cfg,
     n_mutations: int = 1,
     factual_traj: Sequence[dict] | None = None,
+    current_demand: np.ndarray | None = None,
+    current_metrics: Dict[str, float] | None = None,
+    none_traj: Sequence[dict] | None = None,
+    attribution_mode: str | None = None,
 ) -> Dict[str, float]:
     if factual_traj is None:
         real_traj = replay_branch(snapshot, logs[:horizon], horizon, None, cfg)
@@ -146,53 +185,109 @@ def evaluate_replay(
     shadow_traj = replay_branch(snapshot, logs[:horizon], horizon, token, cfg)
     ev = delayed_gain(real_traj[-1], shadow_traj[-1], cfg, n_mutations)
 
-    b = int(getattr(cfg, "cf_bootstrap", 0))
-    if b <= 0:
-        # Cheap matched uncertainty: the horizon steps are paired observations
-        # of the same intervention.  Use their dispersion instead of extra
-        # replays; this keeps the default estimator fast and still conservative.
-        step_gains = [delayed_gain(r, s, cfg, n_mutations)["G"] for r, s in zip(real_traj, shadow_traj)]
-        std = float(np.std(step_gains, ddof=1) / np.sqrt(len(step_gains))) if len(step_gains) > 1 else 0.0
-        lcb = float(ev["G"] - cfg.cf_z * std)
-        ev.update(
-            {
-                "gain_std": std,
-                "gain_lcb": lcb,
-                "confidence": float(1.0 / (1.0 + std)),
-                "bootstrap": 0,
-                "step_gains": step_gains,
-            }
-        )
-        return ev
+    step_gains = [
+        delayed_gain(r, s, cfg, n_mutations)["G"] for r, s in zip(real_traj, shadow_traj)
+    ]
+    mean, se, lcb, confidence = lcb_stats(step_gains, cfg, point_gain=ev["G"])
 
-    rng = np.random.default_rng(10_000 + int(token))
-    gains = []
-    for _ in range(b):
-        demand_override = [
-            _perturb_demand(np.asarray(entry["demand"], dtype=float), rng, cfg.cf_perturb_sigma)
-            for entry in logs[:horizon]
-        ]
-        r = replay_branch(snapshot, logs[:horizon], horizon, None, cfg, demand_override)[-1]
-        c = replay_branch(snapshot, logs[:horizon], horizon, token, cfg, demand_override)[-1]
-        gains.append(delayed_gain(r, c, cfg, n_mutations)["G"])
-    std = float(np.std(gains, ddof=1)) if len(gains) > 1 else 0.0
-    lcb = float(ev["G"] - cfg.cf_z * std / np.sqrt(max(len(gains), 1)))
-    confidence = float(1.0 / (1.0 + std))
+    # --- direct vs indirect attribution -------------------------------------
+    direct_gain = None
+    indirect_gain = None
+    method = "matched_replay"
+    mode = str(attribution_mode if attribution_mode is not None else getattr(cfg, "attribution_mode", "total"))
+    if mode == "direct_indirect":
+        if _has_later_mutations(logs[:horizon], token):
+            target_only = replay_branch(
+                snapshot, logs[:horizon], horizon, None, cfg, include_token=token
+            )
+            if none_traj is None:
+                none_branch = replay_branch(
+                    snapshot, logs[:horizon], horizon, None, cfg, drop_all=True
+                )
+            else:
+                none_branch = list(none_traj)
+            direct_ev = delayed_gain(target_only[-1], none_branch[-1], cfg, 1)
+            direct_gain = float(direct_ev["G"])
+            indirect_gain = float(ev["G"] - direct_gain)
+            method = "matched_replay_direct_indirect"
+        else:
+            direct_gain = float(ev["G"])
+            indirect_gain = 0.0
+            method = "matched_replay_total_only"
+
+    # --- drift diagnostic ----------------------------------------------------
+    reference_demand = logs[horizon - 1].get("demand") if horizon > 0 else None
+    reference_metrics = real_traj[-1]
+    drift = drift_score(
+        current_demand if current_demand is not None else reference_demand,
+        reference_demand,
+        current_metrics if current_metrics is not None else reference_metrics,
+        reference_metrics,
+        cfg,
+    )
+    reliable = is_reliable(drift, cfg)
+    result = build_result(
+        total_gain=float(ev["G"]),
+        step_gains=step_gains,
+        cfg=cfg,
+        direct_gain=direct_gain,
+        drift=drift,
+        reliable=reliable,
+        method=method,
+    )
+
+    # --- matched-demand bootstrap (optional, expensive) ---------------------
+    b = int(getattr(cfg, "cf_bootstrap", 0))
+    bootstrap_gains: List[float] = []
+    if b > 0:
+        rng = np.random.default_rng(10_000 + int(token))
+        for _ in range(b):
+            demand_override = [
+                _perturb_demand(np.asarray(entry["demand"], dtype=float), rng, cfg.cf_perturb_sigma)
+                for entry in logs[:horizon]
+            ]
+            r = replay_branch(snapshot, logs[:horizon], horizon, None, cfg, demand_override)[-1]
+            c = replay_branch(snapshot, logs[:horizon], horizon, token, cfg, demand_override)[-1]
+            bootstrap_gains.append(delayed_gain(r, c, cfg, n_mutations)["G"])
+        bmean, bse, blcb, bconf = lcb_stats(bootstrap_gains, cfg, point_gain=ev["G"])
+        result.gain_std = float(np.std(bootstrap_gains, ddof=1)) if len(bootstrap_gains) > 1 else 0.0
+        result.standard_error = float(bse)
+        result.gain_lcb = float(blcb)
+        result.confidence = float(bconf)
+        result.n_samples = len(bootstrap_gains)
+
     ev.update(
         {
-            "gain_std": std,
-            "gain_lcb": lcb,
-            "confidence": confidence,
-            "bootstrap": len(gains),
-            "bootstrap_gains": gains,
+            "gain_std": float(result.gain_std),
+            "standard_error": float(result.standard_error),
+            "ci95": (
+                float(result.total_gain - 1.96 * result.standard_error),
+                float(result.total_gain + 1.96 * result.standard_error),
+            ),
+            "gain_lcb": float(result.gain_lcb),
+            "confidence": float(result.confidence),
+            "direct_gain": result.direct_gain,
+            "indirect_gain": result.indirect_gain,
+            "attribution_method": result.method,
+            "drift_score": float(result.drift_score),
+            "replay_reliable": bool(result.reliable),
+            "credit_weight": float(result.credit_weight),
+            "n_attribution_samples": int(result.n_samples),
+            "bootstrap": b,
+            "step_gains": step_gains,
         }
     )
+    if bootstrap_gains:
+        ev["bootstrap_gains"] = bootstrap_gains
     return ev
 
 
 def credit_is_valid(ev: Dict[str, float], cfg) -> bool:
-    """Gate credit updates on effect size and uncertainty."""
+    """Gate credit updates on effect size, uncertainty and replay reliability."""
     if ev.get("G", 0.0) == 0.0 and ev.get("gain_std", 0.0) == 0.0:
+        return False
+    weight = float(ev.get("credit_weight", 1.0))
+    if weight <= 1e-9:
         return False
     return (
         abs(float(ev.get("gain_lcb", ev.get("G", 0.0)))) >= cfg.cf_min_effect
@@ -234,4 +329,3 @@ def evaluate_pending(net: EvolvingNetwork, detail: dict, cfg, n_mutations: int =
     ev = delayed_gain(net.last_metrics, before, cfg, n_mutations)
     ev["mode"] = "before_after"
     return ev
-

@@ -26,15 +26,19 @@ from experiments.config import Config
 from network.failures import apply_failures
 from network.graph import EvolvingNetwork, canon
 from network.traffic import route_and_load, scale_demand
-from plens.budget import update_budget
 from plens.credit import update_credit
 from plens.debt import (
     DebtState,
     criticality_from_exposure,
+    dependency_matrix,
     failure_penalty,
+    modification_gate,
+    propagate_relief,
     relief_for_mutation,
+    relief_potential,
     update_debt,
 )
+from plens.economics import EconomyState, economy_step
 from plens.evaluation import (
     credit_is_valid,
     evaluate_pending,
@@ -46,6 +50,7 @@ from plens import mutations as muts
 from plens.mutation_field import expected_benefit, generate_field
 from plens.pressure import plasticity_pressure
 from plens.selector import select_mutations
+from plens.unified import UnifiedState, unified_select
 
 
 class PLENSController:
@@ -58,12 +63,18 @@ class PLENSController:
         self.debt = DebtState.zeros(n)
         self.pd = self.debt.pd
         self.budget = cfg.mutation_budget_initial
+        self.price = float(getattr(cfg, "budget_price_initial", 0.0))
+        self.economy = EconomyState(budget=self.budget, price=self.price)
         self.mc: Dict[tuple, float] = {}
         self.cooldown: Dict[tuple, int] = {}
         self.pending: List[dict] = []
         self.history: List[dict] = []
         self.rejection_log: List[dict] = []
         self.topology_snapshots: List[list] = [[list(e) for e in net.G.edges()]]
+        # Recent accepted modifications, used by the debt modification gate.
+        self.recent_mutations: List[dict] = []
+        self._eval_uncertainty = 0.0
+        self._last_attribution: List[dict] = []
         self.rng = base_rng if base_rng is not None else np.random.default_rng(cfg.seed)
         self.step_log: Dict[int, dict] = {}
         self._token = 0
@@ -83,11 +94,18 @@ class PLENSController:
         self.use_budget = "no_budget" not in a
         self.use_uncertainty = "no_uncertainty" not in a
         self.use_interaction = "no_interaction" not in a
+        self.use_dual_price = "no_dual_price" not in a
+        self.use_unified = bool(getattr(self.cfg, "use_unified_optimizer", True)) and "no_unified" not in a
+        self.use_debt_propagation = "no_debt_propagation" not in a
+        self.use_attribution = "no_attribution" not in a
         self.fixed_score = "fixed_score" in a
         self.do_eval = "no_evaluation" not in a
         self.eval_mode = self.cfg.eval_mode
         if "no_counterfactual" in a:
             self.eval_mode = "before_after"
+        self.attribution_mode = self.cfg.attribution_mode
+        if not self.use_attribution:
+            self.attribution_mode = "total"
         self.budget_mode = self.cfg.budget_mode
         if self.cfg.policy in ("fixed_budget", "threshold"):
             self.budget_mode = "fixed"
@@ -154,6 +172,8 @@ class PLENSController:
         ind = compute_indicators(net, net.demand)
         self.pp = plasticity_pressure(ind, cfg, self.pp)
         criticality = criticality_from_exposure(net, cfg.criticality_floor)
+        dependency = dependency_matrix(net, criticality, cfg)
+        mod_gate = modification_gate(cfg.network_size, self.recent_mutations, t, cfg)
         raw_unresolved = float(
             np.mean(np.clip((self.pp - cfg.debt_tolerance) / max(1.0 - cfg.debt_tolerance, 1e-9), 0.0, 1.0))
         )
@@ -191,10 +211,15 @@ class PLENSController:
         for m in mutations:
             detail = m.get("detail") or {}
             detail["before"] = dict(net.last_metrics)
+            touched_now = set()
             if detail.get("added"):
                 self.cooldown[canon(*detail["added"])] = cfg.cooldown_steps
+                touched_now.update(detail["added"])
             if detail.get("removed"):
                 self.cooldown[canon(*detail["removed"])] = cfg.cooldown_steps
+                touched_now.update(detail["removed"])
+            if touched_now:
+                self.recent_mutations.append({"t": t, "nodes": sorted(touched_now)})
             self._token += 1
             token = self._token
             rec_m = {
@@ -243,6 +268,7 @@ class PLENSController:
         n_success = 0
         n_fail = 0
         confidences: List[float] = []
+        attr_now: List[dict] = []
         due: List[dict] = []
         for item in self.pending:
             if item["t_eval"] > t:
@@ -271,9 +297,20 @@ class PLENSController:
                     )
                     replay_cache[key] = (logs, factual)
                 logs, factual = replay_cache[key]
-            ev = self._evaluate_item(item, logs=logs, factual=factual)
-            gain_credit = ev.get("gain_lcb", ev["G"]) if self.use_uncertainty else ev["G"]
-            confidence = ev.get("confidence", 1.0) if self.use_uncertainty else 1.0
+            ev = self._evaluate_item(
+                item,
+                logs=logs,
+                factual=factual,
+                current_demand=net.demand,
+                current_metrics=net.last_metrics,
+            )
+            if self.use_uncertainty:
+                credit_weight = float(ev.get("credit_weight", 1.0))
+                gain_credit = float(ev.get("gain_lcb", ev["G"])) * credit_weight
+                confidence = float(ev.get("confidence", 1.0)) * credit_weight
+            else:
+                gain_credit = float(ev["G"])
+                confidence = 1.0
             confidences.append(float(confidence))
             success = float(gain_credit) > 0.0
             n_success += int(success)
@@ -281,6 +318,16 @@ class PLENSController:
             self._eval_hist.append(1.0 if success else 0.0)
             gains.append(float(gain_credit))
             stab_costs.append(float(ev.get("stability_cost", 0.0)))
+            attr_now.append(
+                {
+                    "total": float(ev.get("G", 0.0)),
+                    "direct": ev.get("direct_gain"),
+                    "indirect": ev.get("indirect_gain"),
+                    "drift": float(ev.get("drift_score", 0.0)),
+                    "reliable": bool(ev.get("replay_reliable", True)),
+                    "credit_weight": float(ev.get("credit_weight", 1.0)),
+                }
+            )
 
             detail = item["detail"]
             endpoints: List[int] = []
@@ -319,9 +366,15 @@ class PLENSController:
             item["record"]["gain_lcb"] = float(ev.get("gain_lcb", ev["G"]))
             item["record"]["confidence"] = float(ev.get("confidence", 1.0))
         self.pending = still
+        self._last_attribution = attr_now
+        if self.use_debt_propagation:
+            relief = propagate_relief(relief, dependency, cfg)
         relief = np.clip(relief, 0.0, cfg.debt_relief)
         failure = np.clip(failure, 0.0, cfg.debt_failure_penalty * max(len(mutations), 1))
         eval_seconds = time.perf_counter() - eval_t0
+        self.recent_mutations = [
+            e for e in self.recent_mutations if t - int(e["t"]) <= cfg.debt_mod_window
+        ]
 
         # --- feedback: PD(t+1) [F3], B(t+1) [F4] ---
         self.debt = update_debt(
@@ -332,6 +385,8 @@ class PLENSController:
             cfg,
             enabled=self.use_debt,
             failure=failure,
+            dependency=dependency if self.use_debt_propagation else None,
+            modification_gate=mod_gate,
         )
         self.pd = self.debt.pd
 
@@ -340,13 +395,15 @@ class PLENSController:
         mean_stab = float(np.mean(stab_costs)) if stab_costs else 0.0
         failure_rate = float(np.mean(self._eval_hist)) if self._eval_hist else 0.0
         eval_uncertainty = 1.0 - float(np.mean(confidences)) if confidences else 0.0
-        self.budget = update_budget(
-            self.budget,
-            spent,
-            float(np.mean(self.pd)),
-            mean_gain,
-            mean_stab,
-            cfg,
+        self._eval_uncertainty = eval_uncertainty
+        churn = len(mutations) / max(int(cfg.max_mutations_per_step), 1)
+        self.economy = economy_step(
+            EconomyState(budget=self.budget, price=self.price),
+            spent=spent,
+            mean_pd=float(np.mean(self.pd)),
+            mean_gain=mean_gain,
+            mean_stability=mean_stab,
+            cfg=cfg,
             enabled=self.use_budget,
             gain_std=gain_std,
             overload=overload,
@@ -354,9 +411,31 @@ class PLENSController:
             uncertainty=eval_uncertainty,
             refill_scale=self.ml_budget_factor or 1.0,
             mode=self.budget_mode,
+            iteration=t,
+            churn=churn,
         )
+        self.budget = float(self.economy.budget)
+        if self.use_dual_price:
+            self.price = float(self.economy.price)
+        else:
+            self.price = float(cfg.field_weights["cost"])
 
         self.topology_snapshots.append([list(e) for e in net.G.edges()])
+
+        def _mean_attr(key: str, default: float = 0.0) -> float:
+            vals = [float(a[key]) for a in attr_now if a.get(key) is not None]
+            return float(np.mean(vals)) if vals else default
+
+        reliability = (
+            float(np.mean([1.0 if a.get("reliable", True) else 0.0 for a in attr_now]))
+            if attr_now
+            else 1.0
+        )
+        inadequacy = self.debt.inadequacy if self.debt.inadequacy is not None else np.zeros(cfg.network_size)
+        rate = self.debt.rate if self.debt.rate is not None else np.zeros(cfg.network_size)
+        propagated = (
+            self.debt.propagated if self.debt.propagated is not None else np.zeros(cfg.network_size)
+        )
         rec = {
             "t": t,
             "metrics": metrics,
@@ -365,9 +444,25 @@ class PLENSController:
             "pd_max": float(self.pd.max()),
             "debt_persistence_mean": float(self.debt.persistence.mean()),
             "debt_duration_mean": float(self.debt.duration.mean()),
+            "debt_inadequacy_mean": float(np.mean(inadequacy)),
+            "debt_rate_mean": float(np.mean(rate)),
+            "debt_propagation_mean": float(np.mean(propagated)),
+            "mod_gate_mean": float(np.mean(mod_gate)),
             "criticality_mean": float(criticality.mean()),
             "budget": float(self.budget),
             "budget_spent": float(spent),
+            "price": float(self.price),
+            "marginal_utility": float(self.economy.marginal_utility),
+            "dual_residual": float(self.economy.dual_residual),
+            "budget_refill": float(self.economy.refill),
+            "budget_credit": float(self.economy.credit),
+            "churn": float(churn),
+            "attr_total_mean": _mean_attr("total"),
+            "attr_direct_mean": _mean_attr("direct"),
+            "attr_indirect_mean": _mean_attr("indirect"),
+            "drift_mean": _mean_attr("drift"),
+            "credit_weight_mean": _mean_attr("credit_weight", 1.0),
+            "attribution_reliability": reliability,
             "mutations": mutation_records,
             "rejections": [
                 {"op": r.get("op"), "i": r.get("i"), "j": r.get("j"), "reason": r.get("reason")}
@@ -404,6 +499,9 @@ class PLENSController:
             self.budget,
             cfg,
             use_credit=self.use_credit if use_credit is None else use_credit,
+            price=self.price if self.use_dual_price else None,
+            uncertainty=self._eval_uncertainty if self.use_uncertainty else 0.0,
+            debt_relief=relief_potential(self.pd) if self.use_debt else None,
         )
         if self.fixed_score:
             for c in field:
@@ -423,6 +521,20 @@ class PLENSController:
             return [], []
         field = self._field()
         weight = self.cfg.interaction_weight if self.use_interaction else 0.0
+        if self.use_unified:
+            state = UnifiedState(
+                pp=self.pp,
+                pd=self.pd if self.use_debt else np.zeros_like(self.pd),
+                mc=self.mc if self.use_credit else {},
+                price=self.price,
+                budget=self.budget,
+                uncertainty=self._eval_uncertainty if self.use_uncertainty else 0.0,
+                debt_relief=relief_potential(self.pd) if self.use_debt else None,
+                churn=len(self.recent_mutations) / max(cfg.max_mutations_per_step, 1),
+            )
+            return unified_select(
+                self.net, field, state, cfg, self.cooldown, interaction_weight=weight
+            )
         return select_mutations(
             self.net, field, self.budget, self.cfg, self.cooldown, interaction_weight=weight
         )
@@ -591,7 +703,14 @@ class PLENSController:
         return chosen
 
     # ----------------------------------------------------------- evaluation
-    def _evaluate_item(self, item: dict, logs=None, factual=None) -> Dict[str, float]:
+    def _evaluate_item(
+        self,
+        item: dict,
+        logs=None,
+        factual=None,
+        current_demand=None,
+        current_metrics=None,
+    ) -> Dict[str, float]:
         cfg = self.cfg
         if self.eval_mode == "replay_counterfactual":
             if logs is None:
@@ -611,6 +730,9 @@ class PLENSController:
                 cfg=cfg,
                 n_mutations=1,
                 factual_traj=factual,
+                current_demand=current_demand,
+                current_metrics=current_metrics,
+                attribution_mode=self.attribution_mode,
             )
         if self.eval_mode == "immediate":
             return evaluate_pending(self.net, item["detail"], cfg, item["n_mutations"])

@@ -95,7 +95,7 @@ class Config:
             "penalty": 1.2,
         }
     )
-    # --- debt: unresolved structural inadequacy over time [ASSUMPTION] ---
+    # --- debt: dependency-aware structural maladaptation over time [ASSUMPTION] ---
     debt_tolerance: float = 0.35  # deadband: only excess pressure accumulates
     debt_accumulation: float = 0.18  # eta: increment toward saturation
     debt_decay: float = 0.12  # gamma: leak when the pressure is resolved
@@ -110,17 +110,61 @@ class Config:
     cooldown_steps: int = 4
     max_mutations_per_step: int = 4
 
-    # --- interaction-aware selection ---
+    # --- debt propagation, rate and modification suppression [NEW] ---
+    debt_propagation: float = 0.35  # kappa: weight of neighbour inadequacy
+    debt_propagation_tolerance: float = 0.05  # rho: deadband on propagated debt
+    debt_rate_gain: float = 0.10  # eta_r^+: sensitivity to worsening inadequacy
+    debt_rate_decay: float = 0.10  # eta_r^-: sensitivity to improving inadequacy
+    debt_dependency_coupling: float = 0.50  # flow-weighted dependency strength
+    debt_relief_propagation: float = 0.25  # diffusion of relief to dependants
+    debt_mod_suppression: float = 1.50  # mu: damp debt while topology is changing
+    debt_mod_window: int = 6  # steps a mutation keeps its neighbourhood "in flight"
+
+    # --- mutation economics: primal-dual price + resource account [NEW] ---
+    budget_price_initial: float = 0.35  # lambda_0: shadow price of one cost unit
+    budget_price_min: float = 0.0
+    budget_price_max: float = 3.0
+    budget_dual_step: float = 0.08  # alpha_0 in lambda <- proj(lambda + alpha*residual)
+    budget_price_scale: float = 1.0  # residual -> price conversion
+    budget_target_utilization: float = 0.75  # target spend fraction of the account
+    budget_marginal_gain: float = 0.60  # kappa_mu: refill from marginal utility
+    budget_marginal_ref: float = 0.05  # MU_0: utility above which refill grows
+    budget_churn_penalty: float = 0.20  # price increase per unit churn
+    budget_price_refill_damping: float = 0.15  # high price slows account growth
+    budget_dual_decay: float = 0.995  # forgetting of stale price pressure
+
+    # --- interaction-aware selection: higher-order dependencies [NEW] ---
     interaction_weight: float = 0.35
     interaction_radius: int = 1  # neighbourhood for complementarity
+    interaction_order: int = 3  # 1 = marginal, 2 = pairwise, 3 = triple/multi-way
+    interaction_triple_weight: float = 0.15  # w_3 on third-order factors
+    joint_window: int = 64  # lazy-greedy look-ahead window
+    joint_pair_window: int = 8  # pair look-ahead width for joint moves
+    joint_pair_gain_margin: float = 0.05  # pair must beat best singleton by this
+    joint_local_search: bool = True  # bounded joint/look-ahead improvement
+    joint_conflict_propagation: bool = True  # infeasible conflict closure
 
-    # --- counterfactual evaluation ---
+    # --- counterfactual evaluation / attribution [NEW] ---
     eval_mode: str = "replay_counterfactual"  # replay_counterfactual | shadow | before_after | immediate
     cf_bootstrap: int = 0  # matched-demand bootstrap replicates (0 = cheap stepwise paired uncertainty)
-    cf_z: float = 1.0  # lower-confidence-bound multiplier
+    cf_z: float = 1.0  # lower-confidence-bound multiplier (kept for compatibility)
     cf_min_effect: float = 0.005  # below this the credit update is suppressed
     cf_min_confidence: float = 0.20  # uncertainty gate for credit updates
     cf_perturb_sigma: float = 0.15  # lognormal OD perturbation for bootstrap
+    attribution_mode: str = "direct_indirect"  # total | direct_indirect
+    cf_confidence_alpha: float = 0.05  # 1-alpha Student-t / Hoeffding confidence level
+    cf_lcb_method: str = "t"  # t | hoeffding | z
+    cf_drift_threshold: float = 0.35  # total-variation drift above which replay is unreliable
+    cf_drift_weight: float = 0.50  # weight of metric drift in the drift score
+    cf_credit_drift_penalty: float = 1.0  # credit multiplier = 1 - penalty*drift
+
+    # --- unified optimizer [NEW] ---
+    use_unified_optimizer: bool = True  # compose debt/economics/interaction/attribution
+    unified_debt_weight: float = 0.35  # beta_D: debt-relief potential in the objective
+    unified_credit_weight: float = 0.60  # beta_C: counterfactual value in the objective
+    unified_uncertainty_weight: float = 0.25  # rho: risk of an uncertain mutation
+    unified_churn_weight: float = 0.20  # mu: expected churn penalty
+    unified_risk_weight: float = 0.20  # nu: structural risk penalty
 
     policy: str = "plens"  # plens | static | random | greedy | threshold | fixed_budget | adaptive_budget | optimization | bandit
     ablation: str = "none"  # none | no_ml | no_debt | no_credit | no_budget | no_uncertainty | no_interaction | fixed_score | no_counterfactual | no_evaluation
